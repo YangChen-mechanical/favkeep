@@ -333,7 +333,18 @@ export interface WebhookNotifier {
 	headers?: Record<string, string> | null;
 }
 
-export type Notifier = TelegramNotifier | WebhookNotifier;
+export interface SmtpNotifier {
+	type: 'smtp';
+	host: string;
+	port: number;
+	encryption: 'none' | 'tls' | 'starttls';
+	username: string;
+	password: string;
+	from: string;
+	to: string;
+}
+
+export type Notifier = TelegramNotifier | WebhookNotifier | SmtpNotifier;
 
 export type Trigger = number | string;
 
