@@ -72,7 +72,7 @@ const expect = playwrightExpect.configure({ timeout: 15000 });
 				}
 				return route.fulfill({ contentType: 'video/mp4', body: media });
 			}
-			if (url.pathname === '/api/media-session') return json(null);
+			if (url.pathname === '/api/auth/session') return json({ setup_required: false, authenticated: true, username: 'smoke', csrf_token: 'smoke-csrf' });
 			if (url.pathname === '/api/continue-watching')
 				return json(
 					[...progress.values()]
@@ -147,7 +147,7 @@ const expect = playwrightExpect.configure({ timeout: 15000 });
 			await search.fill(query);
 			await page.getByRole('button', { name: '搜索', exact: true }).click();
 		};
-		await page.goto('http://127.0.0.1:5173/watch');
+		await page.goto((process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5173') + '/watch');
 		await expect(saved.getByRole('link'))
 			.toHaveCount(20)
 			.catch(async (error) => {
@@ -213,12 +213,12 @@ const expect = playwrightExpect.configure({ timeout: 15000 });
 		await page.getByRole('link', { name: '前往播放', exact: true }).click();
 		await expect(page.locator('video')).toBeVisible();
 		await page.getByRole('link', { name: '进入管理', exact: true }).click();
-		await expect(page).toHaveURL('http://127.0.0.1:5173/');
+		await expect(page).toHaveURL((process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5173') + '/');
 		await expect(page.getByRole('heading', { name: '继续观看', exact: true })).toHaveCount(0);
 		await page.getByRole('link', { name: '进入观看', exact: true }).click();
-		await expect(page).toHaveURL('http://127.0.0.1:5173/watch');
+		await expect(page).toHaveURL((process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5173') + '/watch');
 		for (const url of ['/watch', '/watch/1?part=102']) {
-			await page.goto(`http://127.0.0.1:5173${url}`);
+			await page.goto((process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5173') + url);
 			await page.setViewportSize({ width: 375, height: 812 });
 			await expect(page.getByRole('navigation', { name: '观看导航' })).toBeVisible();
 			await expect(page.locator('[data-slot="sidebar"]')).toHaveCount(0);
@@ -231,13 +231,13 @@ const expect = playwrightExpect.configure({ timeout: 15000 });
 			});
 		}
 		await page.setViewportSize({ width: 1440, height: 1000 });
-		await page.goto('http://127.0.0.1:5173/watch');
+		await page.goto((process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5173') + '/watch');
 		await expect(saved.getByRole('link')).toHaveCount(20);
 		await page.screenshot({
 			path: path.join(outputDir, 'watch-desktop.png'),
 			fullPage: true
 		});
-		await page.goto('http://127.0.0.1:5173/watch/not-a-number');
+		await page.goto((process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5173') + '/watch/not-a-number');
 		await expect(page.getByRole('alert')).toContainText('无效的视频 ID');
 		await page.evaluate(() => {
 			const link = document.createElement('a');

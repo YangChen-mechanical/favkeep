@@ -1,3 +1,5 @@
+import { get } from 'svelte/store';
+import { authSession, type AppSession } from './stores/auth';
 import type {
 	ApiError,
 	ApiResponse,
@@ -5,6 +7,7 @@ import type {
 	CollectionsResponse,
 	Config,
 	ContinueWatchingItem,
+	Credential,
 	DashBoardResponse,
 	FavoritesResponse,
 	FullSyncVideoSourceRequest,
@@ -14,6 +17,7 @@ import type {
 	InsertFavoriteRequest,
 	InsertSubmissionRequest,
 	Notifier,
+	NotifiersResponse,
 	QrcodePollResponse as PollQrcodeResponse,
 	ResetFilteredVideosResponse,
 	ResetFilteredVideoStatusRequest,
@@ -51,38 +55,32 @@ class ApiClient {
 		this.defaultHeaders = {
 			'Content-Type': 'application/json'
 		};
-		const token = localStorage.getItem('authToken');
-		if (token) {
-			this.defaultHeaders['Authorization'] = token;
-		}
-	}
-
-	// 设置认证 token
-	setAuthToken(token?: string) {
-		if (token) {
-			this.defaultHeaders['Authorization'] = token;
-			localStorage.setItem('authToken', token);
-		} else {
-			delete this.defaultHeaders['Authorization'];
-			localStorage.removeItem('authToken');
-		}
-	}
-
-	getAuthToken(): string | null {
-		return this.defaultHeaders['Authorization'] || localStorage.getItem('authToken');
-	}
-
-	// 清除认证 token
-	async clearAuthToken() {
-		try {
-			await this.request('/media-session', 'DELETE');
-		} catch (error) {
-			if ((error as ApiError).status !== 401) throw error;
-		}
-		delete this.defaultHeaders['Authorization'];
 		localStorage.removeItem('authToken');
-		// 断开 WebSocket 连接，因为 token 已经无效
+	}
+
+	async getSession(): Promise<ApiResponse<AppSession>> {
+		const result = await this.get<AppSession>('/auth/session');
+		authSession.set(result.data);
+		if (!result.data.authenticated) wsManager.disconnect();
+		return result;
+	}
+	async login(username: string, password: string) {
+		await this.post('/auth/login', { username, password });
+		return this.getSession();
+	}
+	async setup(setup_code: string, username: string, password: string) {
+		await this.post('/auth/setup', { setup_code, username, password });
+		return this.getSession();
+	}
+	async logout() {
+		await this.post('/auth/logout');
+		authSession.set({ setup_required: false, authenticated: false });
 		wsManager.disconnect();
+	}
+	async changePassword(current_password: string, new_password: string) {
+		await this.put('/auth/password', { current_password, new_password });
+		wsManager.disconnect();
+		return this.getSession();
 	}
 
 	// 通用请求方法
@@ -109,7 +107,13 @@ class ApiClient {
 
 		const config: RequestInit = {
 			method,
-			headers: this.defaultHeaders
+			credentials: 'same-origin',
+			headers: {
+				...this.defaultHeaders,
+				...(get(authSession)?.csrf_token && method !== 'GET' && method !== 'HEAD'
+					? { 'X-CSRF-Token': get(authSession)!.csrf_token! }
+					: {})
+			}
 		};
 
 		if (body && method !== 'GET') {
@@ -120,6 +124,10 @@ class ApiClient {
 			const response = await fetch(fullUrl, config);
 
 			if (!response.ok) {
+				if (response.status === 401 && url !== '/auth/login') {
+					authSession.set({ setup_required: false, authenticated: false });
+					wsManager.disconnect();
+				}
 				const errorText = await response.text();
 				let errorMessage: string;
 				try {
@@ -171,10 +179,6 @@ class ApiClient {
 
 	async getVideo(id: number): Promise<ApiResponse<VideoResponse>> {
 		return this.get<VideoResponse>(`/videos/${id}`);
-	}
-
-	async openMediaSession(): Promise<ApiResponse<null>> {
-		return this.post<null>('/media-session');
 	}
 
 	async getContinueWatching(): Promise<ApiResponse<ContinueWatchingItem[]>> {
@@ -294,8 +298,28 @@ class ApiClient {
 		return this.get<string>(`/video-sources/${type}/default-path`, { name });
 	}
 
-	async testNotifier(notifier: Notifier): Promise<ApiResponse<boolean>> {
-		return this.post<boolean>('/config/notifiers/ping', notifier);
+	async getNotifiers(): Promise<ApiResponse<NotifiersResponse>> {
+		return this.get('/config/notifiers');
+	}
+	async saveNotifier(
+		version: number,
+		notifier: Notifier,
+		index?: number
+	): Promise<ApiResponse<NotifiersResponse>> {
+		return this.request(
+			'/config/notifiers' + (index === undefined ? '' : '/' + index),
+			index === undefined ? 'POST' : 'PUT',
+			{ version, notifier }
+		);
+	}
+	async deleteNotifier(version: number, index: number): Promise<ApiResponse<NotifiersResponse>> {
+		return this.request('/config/notifiers/' + index, 'DELETE', { version });
+	}
+	async testNotifier(version: number, index: number) {
+		return this.post('/config/notifiers/ping', { version, index });
+	}
+	async updateCredential(version: number, credential: Credential): Promise<ApiResponse<Config>> {
+		return this.put('/config/credential', { version, credential });
 	}
 
 	async getConfig(): Promise<ApiResponse<Config>> {
@@ -319,7 +343,7 @@ class ApiClient {
 	}
 
 	async pollQrcode(qrcodeKey: string): Promise<ApiResponse<PollQrcodeResponse>> {
-		return this.get<PollQrcodeResponse>('/login/qrcode/poll', { qrcode_key: qrcodeKey });
+		return this.post<PollQrcodeResponse>('/login/qrcode/poll', { qrcode_key: qrcodeKey });
 	}
 
 	subscribeToLogs(onMessage: (data: string) => void) {
@@ -341,7 +365,6 @@ const api = {
 	getVideoSources: () => apiClient.getVideoSources(),
 	getVideos: (params?: VideosRequest) => apiClient.getVideos(params),
 	getVideo: (id: number) => apiClient.getVideo(id),
-	openMediaSession: () => apiClient.openMediaSession(),
 	getContinueWatching: () => apiClient.getContinueWatching(),
 	getWatchProgress: (id: number) => apiClient.getWatchProgress(id),
 	saveWatchProgress: (id: number, data: WatchProgressUpdate) =>
@@ -372,7 +395,13 @@ const api = {
 	fullSyncVideoSource: (type: string, id: number, data: { delete_local: boolean }) =>
 		apiClient.fullSyncVideoSource(type, id, data),
 	getDefaultPath: (type: string, name: string) => apiClient.getDefaultPath(type, name),
-	testNotifier: (notifier: Notifier) => apiClient.testNotifier(notifier),
+	getNotifiers: () => apiClient.getNotifiers(),
+	saveNotifier: (version: number, notifier: Notifier, index?: number) =>
+		apiClient.saveNotifier(version, notifier, index),
+	deleteNotifier: (version: number, index: number) => apiClient.deleteNotifier(version, index),
+	testNotifier: (version: number, index: number) => apiClient.testNotifier(version, index),
+	updateCredential: (version: number, credential: Credential) =>
+		apiClient.updateCredential(version, credential),
 	getConfig: () => apiClient.getConfig(),
 	updateConfig: (config: Config) => apiClient.updateConfig(config),
 	getDashboard: () => apiClient.getDashboard(),
@@ -387,9 +416,12 @@ const api = {
 	subscribeToTasks: (onMessage: (data: TaskStatus) => void) =>
 		apiClient.subscribeToTasks(onMessage),
 
-	setAuthToken: (token: string) => apiClient.setAuthToken(token),
-	getAuthToken: () => apiClient.getAuthToken(),
-	clearAuthToken: () => apiClient.clearAuthToken()
+	getSession: () => apiClient.getSession(),
+	login: (username: string, password: string) => apiClient.login(username, password),
+	setup: (code: string, username: string, password: string) =>
+		apiClient.setup(code, username, password),
+	logout: () => apiClient.logout(),
+	changePassword: (current: string, next: string) => apiClient.changePassword(current, next)
 };
 
 export default api;

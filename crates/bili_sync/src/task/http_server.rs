@@ -2,16 +2,14 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use axum::Extension;
 use axum::extract::Request;
 use axum::http::header;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::{Extension, ServiceExt};
-use cookie::time::Duration;
 use reqwest::StatusCode;
 use rust_embed_for_web::{EmbedableFile, RustEmbed};
 use sea_orm::DatabaseConnection;
-use tower_sessions::{Expiry, MemoryStore, SessionManagerLayer};
 
 use crate::api::{LogHelper, router};
 use crate::bilibili::BiliClient;
@@ -27,15 +25,21 @@ pub async fn http_server(
     bili_client: Arc<BiliClient>,
     log_writer: LogHelper,
 ) -> Result<()> {
-    // shortcut: in-memory playback sessions require login after restart; use a persistent store when full login is added.
-    let sessions = SessionManagerLayer::new(MemoryStore::default())
-        .with_name("favkeep_media")
-        .with_secure(!ARGS.insecure_cookies)
-        .with_http_only(true)
-        .with_same_site(cookie::SameSite::Strict)
-        .with_expiry(Expiry::OnInactivity(Duration::days(1)));
+    let origin = ARGS
+        .app_origin
+        .as_deref()
+        .context("请设置 FAVKEEP_APP_ORIGIN，例如 https://favkeep.example.com；本地测试使用 http://127.0.0.1:24188")?;
+    let auth_state = crate::auth::AuthState::new(
+        database_connection.clone(),
+        origin,
+        crate::config::CONFIG_DIR.join("auth-setup.secret"),
+        ARGS.insecure_cookies,
+    )
+    .await?;
+    let sessions = crate::auth::session_layer(&auth_state, ARGS.insecure_cookies);
     let app = router()
         .fallback_service(get(frontend_files).head(frontend_files))
+        .layer(Extension(auth_state))
         .layer(Extension(database_connection))
         .layer(Extension(bili_client))
         .layer(Extension(log_writer))
@@ -64,7 +68,11 @@ pub async fn http_server(
         }
     };
     info!("开始运行管理页：http://{}", bind_address);
-    Ok(axum::serve(listener, ServiceExt::<Request>::into_make_service(app)).await?)
+    Ok(axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?)
 }
 
 async fn frontend_files(request: Request) -> impl IntoResponse {

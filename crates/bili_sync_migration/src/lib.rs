@@ -16,6 +16,8 @@ mod m20260821_025000_mark_empty_tags_for_refetch;
 mod m20260823_000001_add_danmaku_last_synced_at;
 mod m20261022_000001_add_watch_progress;
 
+mod m20261023_000001_add_app_auth;
+
 pub struct Migrator;
 
 #[async_trait::async_trait]
@@ -37,6 +39,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260821_025000_mark_empty_tags_for_refetch::Migration),
             Box::new(m20260823_000001_add_danmaku_last_synced_at::Migration),
             Box::new(m20261022_000001_add_watch_progress::Migration),
+            Box::new(m20261023_000001_add_app_auth::Migration),
         ]
     }
 }

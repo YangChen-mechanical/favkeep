@@ -16,9 +16,7 @@
 				if (active) items = data;
 			})
 			.catch((cause: ApiError) => {
-				if (active)
-					error =
-						cause.status === 401 ? '请先在设置中完成认证。' : '无法加载观看记录，请刷新重试。';
+				if (active) error = cause.status === 401 ? '请先登录。' : '无法加载观看记录，请刷新重试。';
 			})
 			.finally(() => {
 				if (active) loading = false;

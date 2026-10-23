@@ -14,4 +14,5 @@ pub use crate::config::item::{
     ConcurrentDownloadLimit, DanmakuUpdateMilestone, NFOTimeType, PathSafeTemplate, RateLimit, Trigger,
 };
 pub use crate::config::versioned_cache::VersionedCache;
+pub(crate) use crate::config::versioned_config::ConfigConflict;
 pub use crate::config::versioned_config::VersionedConfig;

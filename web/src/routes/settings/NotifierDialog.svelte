@@ -10,6 +10,9 @@
 	export let notifier: Notifier | null = null;
 	export let onSave: (notifier: Notifier) => void;
 	export let onCancel: () => void;
+	export let busy = false;
+	let replaceHeaders = false;
+	let clearPassword = false;
 
 	let type: Notifier['type'] = 'telegram';
 	let botToken = '';
@@ -31,12 +34,12 @@
 		if (notifier) {
 			if (notifier.type === 'telegram') {
 				type = 'telegram';
-				botToken = notifier.bot_token;
+				botToken = notifier.bot_token || '';
 				chatId = notifier.chat_id;
 				skipImage = notifier.skip_image;
 			} else if (notifier.type === 'webhook') {
 				type = 'webhook';
-				webhookUrl = notifier.url;
+				webhookUrl = notifier.url || '';
 				webhookTemplate = notifier.template || '';
 				if (notifier.headers) {
 					webhookHeaders = Object.entries(notifier.headers).map(([key, value]) => ({ key, value }));
@@ -49,7 +52,7 @@
 				smtpPort = notifier.port;
 				smtpEncryption = notifier.encryption;
 				smtpUsername = notifier.username;
-				smtpPassword = notifier.password;
+				smtpPassword = notifier.password || '';
 				smtpFrom = notifier.from;
 				smtpTo = notifier.to;
 			}
@@ -72,8 +75,9 @@
 	}
 
 	function handleSave() {
+		if (busy) return;
 		if (type === 'telegram') {
-			if (!botToken.trim()) {
+			if (!botToken.trim() && !(notifier?.type === 'telegram' && notifier.configured?.bot_token)) {
 				toast.error('请输入 Bot Token');
 				return;
 			}
@@ -84,19 +88,19 @@
 
 			const newNotifier: Notifier = {
 				type: 'telegram',
-				bot_token: botToken.trim(),
+				...(botToken.trim() ? { bot_token: botToken.trim() } : {}),
 				chat_id: chatId.trim(),
 				skip_image: skipImage
 			};
 			onSave(newNotifier);
 		} else if (type === 'webhook') {
-			if (!webhookUrl.trim()) {
+			if (!webhookUrl.trim() && !(notifier?.type === 'webhook' && notifier.configured?.url)) {
 				toast.error('请输入 Webhook URL');
 				return;
 			}
 
 			try {
-				new URL(webhookUrl.trim());
+				if (webhookUrl.trim()) new URL(webhookUrl.trim());
 			} catch {
 				toast.error('请输入有效的 Webhook URL');
 				return;
@@ -113,9 +117,11 @@
 
 			const newNotifier: Notifier = {
 				type: 'webhook',
-				url: webhookUrl.trim(),
+				...(webhookUrl.trim() ? { url: webhookUrl.trim() } : {}),
 				template: webhookTemplate.trim() || null,
-				headers: Object.keys(headers).length > 0 ? headers : null
+				...(replaceHeaders || Object.keys(headers).length > 0 || !notifier
+					? { headers: Object.keys(headers).length > 0 ? headers : null }
+					: {})
 			};
 			onSave(newNotifier);
 		} else {
@@ -143,7 +149,9 @@
 				port: smtpPort,
 				encryption: smtpEncryption,
 				username: smtpUsername.trim(),
-				password: smtpPassword,
+				...(smtpPassword || clearPassword || !notifier
+					? { password: clearPassword ? '' : smtpPassword }
+					: {}),
 				from: smtpFrom.trim(),
 				to: smtpTo.trim()
 			};
@@ -153,6 +161,9 @@
 </script>
 
 <div class="space-y-4 py-4">
+	{#if notifier}<p class="text-muted-foreground text-sm">
+			已保存的秘密不回显。留空会保留原值；新输入会替换原值。
+		</p>{/if}
 	<div class="space-y-2">
 		<Label for="notifier-type">通知器类型</Label>
 		<select
@@ -169,7 +180,7 @@
 	{#if type === 'telegram'}
 		<div class="space-y-2">
 			<Label for="bot-token">Bot Token</Label>
-			<Input
+			<PasswordInput
 				id="bot-token"
 				placeholder="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
 				bind:value={botToken}
@@ -188,9 +199,12 @@
 	{:else if type === 'webhook'}
 		<div class="space-y-2">
 			<Label for="webhook-url">Webhook URL</Label>
-			<Input id="webhook-url" placeholder="请输入 Webhook 地址" bind:value={webhookUrl} />
+			<PasswordInput id="webhook-url" placeholder="请输入 Webhook 地址" bind:value={webhookUrl} />
 		</div>
 		<div class="space-y-2">
+			{#if notifier}<label class="flex items-center gap-2 text-sm"
+					><Checkbox bind:checked={replaceHeaders} />替换全部请求头（留空将清除）</label
+				>{/if}
 			<Label for="webhook-template">模板（可选）</Label>
 			<textarea
 				id="webhook-template"
@@ -279,6 +293,9 @@
 			<Label for="smtp-password">密码／授权码（可选）</Label>
 			<PasswordInput id="smtp-password" placeholder="密码或邮箱授权码" bind:value={smtpPassword} />
 			<p class="text-muted-foreground text-xs">无需认证时，用户名和密码都留空。</p>
+			{#if notifier}<label class="flex items-center gap-2 text-sm"
+					><Checkbox bind:checked={clearPassword} />清除已保存的 SMTP 密码</label
+				>{/if}
 		</div>
 		<div class="space-y-2">
 			<Label for="smtp-from">发件人</Label>
@@ -292,6 +309,6 @@
 </div>
 
 <div class="flex justify-end gap-3">
-	<Button variant="outline" onclick={onCancel}>取消</Button>
-	<Button onclick={handleSave}>确认</Button>
+	<Button variant="outline" onclick={onCancel} disabled={busy}>取消</Button>
+	<Button onclick={handleSave} disabled={busy}>确认</Button>
 </div>

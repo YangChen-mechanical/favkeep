@@ -4,7 +4,7 @@
 	import * as Card from '$lib/components/ui/card';
 	import { toast } from 'svelte-sonner';
 	import api from '$lib/api';
-	import type { Credential, ApiError } from '$lib/types';
+	import type { ApiError } from '$lib/types';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import QRCode from 'qrcode';
@@ -16,7 +16,7 @@
 	 * loading -> showing -> (success | expired | error)
 	 * success 会调用 onSuccess 回调，由父组件关闭弹窗，不需要内部做处理
 	 *
-	 * @prop onSuccess - 登录成功回调，接收完整的凭证对象
+	 * @prop onSuccess - 登录成功回调，凭据已由服务器保存
 	 */
 
 	// 常量配置
@@ -26,7 +26,7 @@
 	const QR_SIZE = 256; // 二维码图片尺寸（像素）
 	const QR_MARGIN = 2; // 二维码边距
 
-	export let onSuccess: (credential: Credential) => void;
+	export let onSuccess: () => void;
 
 	export function init() {
 		generateQrcode();
@@ -112,7 +112,7 @@
 			if (pollResult.status === 'success') {
 				stopPolling();
 				stopCountdown();
-				onSuccess(pollResult.credential);
+				onSuccess();
 			} else if (pollResult.status === 'pending') {
 				scanned = pollResult.scanned || false;
 			} else if (pollResult.status === 'expired') {

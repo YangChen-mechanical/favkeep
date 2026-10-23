@@ -8,8 +8,7 @@ export default defineConfig({
 		proxy: {
 			'/api/ws': {
 				target: 'ws://localhost:12345',
-				ws: true,
-				rewriteWsOrigin: true
+				ws: true
 			},
 			'/api': 'http://localhost:12345'
 		},

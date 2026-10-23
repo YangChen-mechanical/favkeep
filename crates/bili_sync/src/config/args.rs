@@ -27,6 +27,14 @@ pub struct Args {
     /// Only enable for local HTTP development; public deployments require HTTPS.
     #[arg(long, env = "FAVKEEP_INSECURE_COOKIES")]
     pub insecure_cookies: bool,
+
+    /// Full browser origin, including scheme and port; no path.
+    #[arg(long, env = "FAVKEEP_APP_ORIGIN")]
+    pub app_origin: Option<String>,
+
+    /// Stop the server before using this local administrator recovery command.
+    #[arg(long)]
+    pub reset_password: bool,
 }
 
 mod built_info {

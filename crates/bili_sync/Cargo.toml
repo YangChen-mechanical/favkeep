@@ -10,6 +10,10 @@ readme = "../../README.md"
 build = "build.rs"
 
 [dependencies]
+argon2 = { workspace = true }
+async-trait = { workspace = true }
+rpassword = { workspace = true }
+subtle = { workspace = true }
 anyhow = { workspace = true }
 arc-swap = { workspace = true }
 async-stream = { workspace = true }

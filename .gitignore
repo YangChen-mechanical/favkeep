@@ -6,3 +6,5 @@ node_modules
 docs/.vitepress/cache
 docs/.vitepress/dist
 local-data/
+
+auth-setup.secret

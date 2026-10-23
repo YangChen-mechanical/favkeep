@@ -10,9 +10,13 @@ use crate::config::Config;
 
 static VERSIONED_CONFIG: OnceCell<VersionedConfig> = OnceCell::const_new();
 
+#[derive(Debug, thiserror::Error)]
+#[error("配置版本不匹配，请刷新页面修改后重新提交")]
+pub(crate) struct ConfigConflict;
+
 pub struct VersionedConfig {
     inner: ArcSwap<Config>,
-    update_lock: tokio::sync::Mutex<()>,
+    pub(crate) update_lock: tokio::sync::Mutex<()>,
     tx: watch::Sender<Arc<Config>>,
     rx: watch::Receiver<Arc<Config>>,
 }
@@ -27,10 +31,6 @@ impl VersionedConfig {
                     Some(Err(e)) => bail!("解析数据库配置失败： {}", e),
                     None => {
                         let config = Config::default();
-                        warn!(
-                            "生成 auth_token：{}，可使用该 token 登录 web UI，该信息仅在首次运行时打印",
-                            config.auth_token
-                        );
                         config.save_to_database(connection).await?;
                         config
                     }
@@ -109,12 +109,14 @@ impl VersionedConfig {
         Ok(new_config)
     }
 
-    /// 外部 API 会调用这个方法，如果更新失败直接返回错误
-    pub async fn update(&self, mut new_config: Config, connection: &DatabaseConnection) -> Result<Arc<Config>> {
-        let _lock = self.update_lock.lock().await;
+    pub(crate) async fn update_locked(
+        &self,
+        mut new_config: Config,
+        connection: &DatabaseConnection,
+    ) -> Result<Arc<Config>> {
         let old_config = self.inner.load();
         if old_config.version != new_config.version {
-            bail!("配置版本不匹配，请刷新页面修改后重新提交");
+            return Err(ConfigConflict.into());
         }
         new_config.version += 1;
         new_config.save_to_database(connection).await?;

@@ -1,39 +1,89 @@
 <script lang="ts">
 	import '../app.css';
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
 	import AppSidebar from '$lib/components/app-sidebar.svelte';
 	import BreadCrumb from '$lib/components/bread-crumb.svelte';
 	import { Separator } from '$lib/components/ui/separator/index.js';
+	import { Button } from '$lib/components/ui/button/index.js';
 	import { breadcrumbStore } from '$lib/stores/breadcrumb';
+	import { authSession, returnPath } from '$lib/stores/auth';
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
 	import { Toaster } from '$lib/components/ui/sonner/index.js';
 	import { ModeWatcher } from 'mode-watcher';
-	import { page } from '$app/stores';
-
+	import api from '$lib/api';
+	import { toast } from 'svelte-sonner';
+	let checked = false;
+	let sessionError = '';
 	$: watching = $page.url.pathname === '/watch' || $page.url.pathname.startsWith('/watch/');
+	$: authPage = ['/login', '/setup'].includes($page.url.pathname);
+	$: if (checked && $authSession) {
+		const path = $page.url.pathname;
+		if ($authSession.setup_required && path !== '/setup') {
+			void goto('/setup', { replaceState: true });
+		} else if (!$authSession.setup_required && !$authSession.authenticated && path !== '/login') {
+			const destination = authPage ? '/watch' : path + $page.url.search;
+			void goto('/login?returnTo=' + encodeURIComponent(destination), { replaceState: true });
+		} else if ($authSession.authenticated && authPage) {
+			void goto(returnPath($page.url.searchParams.get('returnTo')), { replaceState: true });
+		}
+	}
+	async function checkSession() {
+		sessionError = '';
+		try {
+			await api.getSession();
+			checked = true;
+		} catch {
+			sessionError = '无法连接认证服务，请检查连接后重试。';
+		}
+	}
+	async function logout() {
+		try {
+			await api.logout();
+		} catch {
+			toast.error('退出失败，请检查连接后重试');
+		}
+	}
+	onMount(() => {
+		void checkSession();
+	});
 </script>
 
 <ModeWatcher disableHeadScriptInjection />
 <Toaster position="top-center" duration={3000} />
-{#if watching}
+{#if sessionError}
+	<main class="mx-auto max-w-lg space-y-4 p-6">
+		<p role="alert">{sessionError}</p>
+		<Button onclick={checkSession}>重试</Button>
+	</main>
+{:else if !checked}
+	<p class="p-6" role="status">正在检查登录状态…</p>
+{:else if authPage}
 	<slot />
-{:else}
-	<Sidebar.Provider>
-		<AppSidebar />
-		<Sidebar.Inset class="flex flex-col" style="height: calc(100vh - 1rem)">
-			<header class="flex h-16 shrink-0 items-center gap-2">
-				<div class="flex items-center gap-2 px-4">
-					<Sidebar.Trigger class="-ml-1" />
-					<Separator orientation="vertical" class="mr-2 data-[orientation=vertical]:h-4" />
-					<BreadCrumb items={$breadcrumbStore} />
+{:else if $authSession?.authenticated}
+	{#if watching}
+		<slot />
+	{:else}
+		<Sidebar.Provider>
+			<AppSidebar />
+			<Sidebar.Inset class="flex flex-col" style="height: calc(100vh - 1rem)">
+				<header class="flex h-16 shrink-0 items-center justify-between gap-2 px-4">
+					<div class="flex items-center gap-2">
+						<Sidebar.Trigger class="-ml-1" />
+						<Separator orientation="vertical" class="mr-2 data-[orientation=vertical]:h-4" />
+						<BreadCrumb items={$breadcrumbStore} />
+					</div>
+					<Button variant="ghost" onclick={logout}>退出登录</Button>
+				</header>
+				<div
+					class="w-full overflow-y-auto px-6 py-2"
+					style="scrollbar-width: thin; scrollbar-gutter: stable !important;"
+					id="main"
+				>
+					<slot />
 				</div>
-			</header>
-			<div
-				class="w-full overflow-y-auto px-6 py-2"
-				style="scrollbar-width: thin; scrollbar-gutter: stable !important;"
-				id="main"
-			>
-				<slot />
-			</div>
-		</Sidebar.Inset>
-	</Sidebar.Provider>
+			</Sidebar.Inset>
+		</Sidebar.Provider>
+	{/if}
 {/if}

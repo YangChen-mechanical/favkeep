@@ -15,6 +15,9 @@ publish = false
 bili_sync_entity = { path = "crates/bili_sync_entity" }
 bili_sync_migration = { path = "crates/bili_sync_migration" }
 
+argon2 = "0.5.3"
+rpassword = "7.4.0"
+subtle = "2.6.1"
 anyhow = { version = "1.0.103", features = ["backtrace"] }
 arc-swap = { version = "1.9.2", features = ["serde"] }
 async-stream = "0.3.6"

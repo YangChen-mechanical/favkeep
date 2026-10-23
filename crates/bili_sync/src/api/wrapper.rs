@@ -38,14 +38,6 @@ impl<T: Serialize> ApiResponse<T> {
         }
     }
 
-    pub fn unauthorized(message: impl Into<Cow<'static, str>>) -> Self {
-        Self {
-            status_code: 401,
-            data: None,
-            message: Some(message.into()),
-        }
-    }
-
     pub fn not_found(message: impl Into<Cow<'static, str>>) -> Self {
         Self {
             status_code: 404,
@@ -86,6 +78,13 @@ where
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
+        if self.0.is::<crate::config::ConfigConflict>() {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({"status_code":409,"message":self.0.to_string()})),
+            )
+                .into_response();
+        }
         if let Some(inner_error) = self.0.downcast_ref::<InnerApiError>() {
             match inner_error {
                 InnerApiError::NotFound(_) => return ApiResponse::<()>::not_found(self.0.to_string()).into_response(),

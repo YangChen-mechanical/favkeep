@@ -35,8 +35,13 @@ pub(super) fn router() -> Router {
     Router::new().route("/ws", any(websocket_handler))
 }
 
-async fn websocket_handler(ws: WebSocketUpgrade, Extension(log_writer): Extension<LogHelper>) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(socket, log_writer))
+async fn websocket_handler(
+    ws: WebSocketUpgrade,
+    Extension(log_writer): Extension<LogHelper>,
+    Extension(state): Extension<Arc<crate::auth::AuthState>>,
+    Extension(identity): Extension<crate::auth::AuthenticatedSession>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_socket(socket, log_writer, state, identity))
 }
 
 // 事件类型枚举
@@ -77,8 +82,13 @@ impl WebSocketHandler {
     }
 
     /// 向客户端推送信息
-    async fn handle_sender(&self, mut sender: SplitSink<WebSocket, Message>, mut rx: mpsc::Receiver<ServerEvent>) {
-        while let Some(event) = rx.recv().await {
+    async fn handle_sender(
+        &self,
+        mut sender: SplitSink<WebSocket, Message>,
+        mut rx: mpsc::Receiver<ServerEvent>,
+        cancel: CancellationToken,
+    ) {
+        while let Some(event) = tokio::select! { _ = cancel.cancelled() => None, event = rx.recv() => event } {
             let text = match serde_json::to_string(&event) {
                 Ok(text) => text,
                 Err(e) => {
@@ -100,12 +110,15 @@ impl WebSocketHandler {
         tx: mpsc::Sender<ServerEvent>,
         uuid: Uuid,
         log_writer: LogHelper,
+        cancel: CancellationToken,
     ) {
         // 日志和任务状态的处理本身就是由 stream 驱动的，可以直接为每个 ws 连接维护独立的任务处理器
         // 系统信息是服务端轮询然后推送的，如果单独维护会导致每个连接都独立轮询系统信息，造成不必要的浪费
         // 因此采用了全局的订阅者管理，所有连接共享同一个系统信息轮询任务
         let (mut log_cancel, mut task_cancel) = (None, None);
-        while let Some(Ok(msg)) = receiver.next().await {
+        while let Some(Ok(msg)) =
+            tokio::select! { _ = cancel.cancelled() => None, message = receiver.next() => message }
+        {
             let Message::Text(text) = msg else {
                 continue;
             };
@@ -307,12 +320,36 @@ impl WebSocketHandler {
     }
 }
 
-async fn handle_socket(socket: WebSocket, log_writer: LogHelper) {
+async fn handle_socket(
+    socket: WebSocket,
+    log_writer: LogHelper,
+    state: Arc<crate::auth::AuthState>,
+    identity: crate::auth::AuthenticatedSession,
+) {
     let (ws_sender, ws_receiver) = socket.split();
     let uuid = Uuid::new_v4();
     let (tx, rx) = tokio::sync::mpsc::channel(100);
-    tokio::spawn(WEBSOCKET_HANDLER.handle_sender(ws_sender, rx));
-    tokio::spawn(WEBSOCKET_HANDLER.handle_receiver(ws_receiver, tx, uuid, log_writer));
+    let cancel = CancellationToken::new();
+    let revoke_cancel = cancel.clone();
+    let watcher = tokio::spawn(async move {
+        state.wait_revoked(&identity.0).await;
+        revoke_cancel.cancel();
+    });
+    let sender_cancel = cancel.clone();
+    let receiver_cancel = cancel.clone();
+    tokio::join!(
+        async {
+            WEBSOCKET_HANDLER.handle_sender(ws_sender, rx, sender_cancel).await;
+            cancel.cancel();
+        },
+        async {
+            WEBSOCKET_HANDLER
+                .handle_receiver(ws_receiver, tx, uuid, log_writer, receiver_cancel)
+                .await;
+            cancel.cancel();
+        }
+    );
+    watcher.abort();
 }
 
 trait SysInfoExt {

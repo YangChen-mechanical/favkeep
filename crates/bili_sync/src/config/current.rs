@@ -79,15 +79,6 @@ impl Config {
         if self.page_name.is_empty() {
             errors.push("未设置 page_name 模板");
         }
-        let credential = &self.credential;
-        if credential.sessdata.is_empty()
-            || credential.bili_jct.is_empty()
-            || credential.buvid3.is_empty()
-            || credential.dedeuserid.is_empty()
-            || credential.ac_time_value.is_empty()
-        {
-            errors.push("Credential 信息不完整，请确保填写完整");
-        }
         if !(self.concurrent_limit.video > 0 && self.concurrent_limit.page > 0) {
             errors.push("video 和 page 允许的并发数必须大于 0");
         }

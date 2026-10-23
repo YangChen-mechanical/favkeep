@@ -4,7 +4,7 @@ use sea_orm::prelude::DateTime;
 use sea_orm::{DerivePartialModel, FromQueryResult};
 use serde::Serialize;
 
-use crate::bilibili::{PollStatus, Qrcode};
+use crate::bilibili::Qrcode;
 use crate::utils::status::{PageStatus, VideoStatus};
 
 #[derive(Serialize)]
@@ -246,8 +246,6 @@ pub struct UpdateVideoSourceResponse {
 }
 
 pub type GenerateQrcodeResponse = Qrcode;
-
-pub type PollQrcodeResponse = PollStatus;
 
 #[derive(Serialize)]
 pub struct FullSyncVideoSourceResponse {

@@ -343,14 +343,14 @@ export interface ConcurrentLimit {
 
 export interface TelegramNotifier {
 	type: 'telegram';
-	bot_token: string;
+	bot_token?: string;
 	chat_id: string;
 	skip_image: boolean;
 }
 
 export interface WebhookNotifier {
 	type: 'webhook';
-	url: string;
+	url?: string;
 	template?: string | null;
 	headers?: Record<string, string> | null;
 }
@@ -361,26 +361,31 @@ export interface SmtpNotifier {
 	port: number;
 	encryption: 'none' | 'tls' | 'starttls';
 	username: string;
-	password: string;
+	password?: string;
 	from: string;
 	to: string;
 }
 
-export type Notifier = TelegramNotifier | WebhookNotifier | SmtpNotifier;
+export type Notifier = (TelegramNotifier | WebhookNotifier | SmtpNotifier) & {
+	index?: number;
+	configured?: Record<string, boolean>;
+};
+export interface NotifiersResponse {
+	version: number;
+	items: Notifier[];
+}
 
 export type Trigger = number | string;
 
 export interface Config {
-	auth_token: string;
 	bind_address: string;
-	credential: Credential;
+	credential_configured: boolean;
 	filter_option: FilterOption;
 	danmaku_option: DanmakuOption;
 	danmaku_update_policy: DanmakuUpdatePolicy;
 	skip_option: SkipOption;
 	video_name: string;
 	page_name: string;
-	notifiers: Notifier[] | null;
 	ignore_common_errors: boolean;
 	favorite_default_path: string;
 	collection_default_path: string;
@@ -440,7 +445,7 @@ export interface QrcodeGenerateResponse {
 export type QrcodePollResponse =
 	| {
 			status: 'success';
-			credential: Credential;
+			version: number;
 	  }
 	| {
 			status: 'pending';

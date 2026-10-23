@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button/index.js';
+	import api from '$lib/api';
+	import { toast } from 'svelte-sonner';
 	import { mode, toggleMode } from 'mode-watcher';
 </script>
 
@@ -16,6 +18,16 @@
 					切换为{mode.current === 'light' ? '暗色' : '亮色'}
 				</Button>
 				<Button variant="outline" href="/">进入管理</Button>
+				<Button
+					variant="ghost"
+					onclick={async () => {
+						try {
+							await api.logout();
+						} catch {
+							toast.error('退出失败，请重试');
+						}
+					}}>退出登录</Button
+				>
 			</div>
 		</nav>
 	</header>

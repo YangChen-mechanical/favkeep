@@ -1,5 +1,7 @@
 import { toast } from 'svelte-sonner';
+import { get } from 'svelte/store';
 import api from './api';
+import { authSession } from './stores/auth';
 import type { SysInfo, TaskStatus } from './types';
 
 // 支持的事件类型
@@ -54,19 +56,14 @@ export class WebSocketManager {
 
 	// 连接 WebSocket
 	public connect(): Promise<void> {
+		if (!get(authSession)?.authenticated) return Promise.reject(new Error('请先登录'));
 		if (this.connected) return Promise.resolve();
 		if (this.connectionPromise) return this.connectionPromise;
 
 		this.connectionPromise = new Promise((resolve, reject) => {
-			const token = api.getAuthToken() || '';
-
 			try {
 				const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-				// 使用 base64URL no padding 编码 token 以避免特殊字符问题
-				this.socket = new WebSocket(
-					`${protocol}${window.location.host}/api/ws`,
-					btoa(token).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-				);
+				this.socket = new WebSocket(protocol + window.location.host + '/api/ws');
 				this.socket.onopen = () => {
 					this.connected = true;
 					this.reconnectAttempts = 0;
@@ -80,7 +77,12 @@ export class WebSocketManager {
 				this.socket.onclose = () => {
 					this.connected = false;
 					this.connectionPromise = null;
-					this.scheduleReconnect();
+					void api
+						.getSession()
+						.then(({ data }) => {
+							if (data.authenticated) this.scheduleReconnect();
+						})
+						.catch(() => this.scheduleReconnect());
 				};
 
 				this.socket.onerror = (error) => {
@@ -159,6 +161,7 @@ export class WebSocketManager {
 	}
 
 	private scheduleReconnect(): void {
+		if (!get(authSession)?.authenticated) return;
 		if (this.reconnectTimer !== null) {
 			clearTimeout(this.reconnectTimer);
 		}
@@ -255,6 +258,7 @@ export class WebSocketManager {
 
 	public disconnect(): void {
 		if (this.socket) {
+			this.socket.onclose = null;
 			this.socket.close();
 			this.socket = null;
 		}

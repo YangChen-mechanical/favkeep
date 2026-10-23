@@ -20,7 +20,20 @@
 	import { setBreadcrumb } from '$lib/stores/breadcrumb';
 	import type { Config, ApiError, Notifier, Credential, DanmakuUpdateMilestone } from '$lib/types';
 
-	let frontendToken = ''; // 前端认证token
+	let credential: Credential = {
+		sessdata: '',
+		bili_jct: '',
+		buvid3: '',
+		dedeuserid: '',
+		ac_time_value: ''
+	};
+	let notifiers: Notifier[] = [];
+	let notifierSaving = false;
+	let credentialSaving = false;
+	let currentPassword = '';
+	let newPassword = '';
+	let confirmPassword = '';
+	let changingPassword = false;
 	let config: Config | null = null;
 	let formData: Config | null = null;
 	let saving = false;
@@ -59,37 +72,83 @@
 		isEditing = false;
 	}
 
-	function addNotifier(notifier: Notifier) {
-		if (!formData) return;
-		if (!formData.notifiers) {
-			formData.notifiers = [];
-		}
-		formData.notifiers = [...formData.notifiers, notifier];
-		closeNotifierDialog();
-	}
-
-	function updateNotifier(index: number, notifier: Notifier) {
-		if (!formData?.notifiers) return;
-		const newNotifiers = [...formData.notifiers];
-		newNotifiers[index] = notifier;
-		formData.notifiers = newNotifiers;
-		closeNotifierDialog();
-	}
-
-	function deleteNotifier(index: number) {
-		if (!formData?.notifiers) return;
-		formData.notifiers = formData.notifiers.filter((_, i) => i !== index);
-	}
-
-	async function testNotifier(notifier: Notifier) {
+	async function persistNotifier(notifier: Notifier, index?: number) {
+		if (!formData || notifierSaving) return;
+		notifierSaving = true;
 		try {
-			await api.testNotifier(notifier);
+			const response = await api.saveNotifier(formData.version, notifier, index);
+			notifiers = response.data.items;
+			formData.version = response.data.version;
+			closeNotifierDialog();
+			toast.success('通知器已保存');
+		} catch (error) {
+			toast.error((error as ApiError).message);
+		} finally {
+			notifierSaving = false;
+		}
+	}
+	function addNotifier(notifier: Notifier) {
+		return persistNotifier(notifier);
+	}
+	function updateNotifier(index: number, notifier: Notifier) {
+		return persistNotifier(notifier, index);
+	}
+	async function deleteNotifier(index: number) {
+		if (!formData || notifierSaving || !window.confirm('删除此通知器？')) return;
+		notifierSaving = true;
+		try {
+			const response = await api.deleteNotifier(formData.version, index);
+			notifiers = response.data.items;
+			formData.version = response.data.version;
+			toast.success('通知器已删除');
+		} catch (error) {
+			toast.error((error as ApiError).message);
+		} finally {
+			notifierSaving = false;
+		}
+	}
+	async function testNotifier(notifier: Notifier) {
+		if (!formData || notifier.index === undefined) return;
+		try {
+			await api.testNotifier(formData.version, notifier.index);
 			toast.success('测试通知发送成功');
 		} catch (error) {
-			console.error('测试通知失败:', error);
-			toast.error('测试通知失败', {
-				description: (error as ApiError).message
-			});
+			toast.error((error as ApiError).message);
+		}
+	}
+	async function saveCredential() {
+		if (!formData || credentialSaving) return;
+		credentialSaving = true;
+		try {
+			const response = await api.updateCredential(formData.version, credential);
+			formData.version = response.data.version;
+			formData.credential_configured = response.data.credential_configured;
+			credential = { sessdata: '', bili_jct: '', buvid3: '', dedeuserid: '', ac_time_value: '' };
+			toast.success('B 站凭据已保存');
+		} catch (error) {
+			toast.error((error as ApiError).message);
+		} finally {
+			credentialSaving = false;
+		}
+	}
+	async function changePassword(event: SubmitEvent) {
+		event.preventDefault();
+		if (changingPassword) return;
+		if (newPassword !== confirmPassword) {
+			toast.error('两次新密码不一致');
+			return;
+		}
+		changingPassword = true;
+		try {
+			await api.changePassword(currentPassword, newPassword);
+			currentPassword = '';
+			newPassword = '';
+			confirmPassword = '';
+			toast.success('密码已修改，其他会话已退出');
+		} catch (error) {
+			toast.error((error as ApiError).message);
+		} finally {
+			changingPassword = false;
 		}
 	}
 
@@ -98,6 +157,10 @@
 		try {
 			const response = await api.getConfig();
 			config = response.data;
+			const notifications = await api.getNotifiers();
+			if (notifications.data.version !== config.version)
+				throw { message: '设置刚刚发生变化，请重新加载', status: 409 } as ApiError;
+			notifiers = notifications.data.items;
 			formData = { ...config };
 
 			// 根据 interval 的类型初始化输入框
@@ -114,24 +177,6 @@
 			throw error;
 		} finally {
 			loading = false;
-		}
-	}
-
-	async function authenticateFrontend() {
-		if (!frontendToken.trim()) {
-			toast.error('请输入前端认证Token');
-			return;
-		}
-
-		try {
-			api.setAuthToken(frontendToken.trim());
-			await loadConfig();
-			toast.success('前端认证成功');
-		} catch (error) {
-			console.error('前端认证失败:', error);
-			toast.error('认证失败，请检查Token是否正确', {
-				description: (error as ApiError).message
-			});
 		}
 	}
 
@@ -213,24 +258,21 @@
 		);
 	}
 
-	function handleQrLoginSuccess(credential: Credential) {
-		if (!formData) return;
-
-		// 自动填充凭证到 formData
-		formData.credential = credential;
-
-		toast.success('扫码登录成功，已填充凭据');
-
-		// 自动保存配置
-		saveConfig();
-
-		// 关闭弹窗
+	async function handleQrLoginSuccess() {
 		showQrLoginDialog = false;
+		const response = await api.getConfig();
+		if (formData && response.data.version === formData.version + 1) {
+			formData.version = response.data.version;
+			formData.credential_configured = response.data.credential_configured;
+		} else {
+			toast.info('B 站凭据已保存。配置已变化，保存普通设置前请重新加载。');
+		}
+		credential = { sessdata: '', bili_jct: '', buvid3: '', dedeuserid: '', ac_time_value: '' };
+		toast.success('扫码登录成功，凭据已由服务器保存');
 	}
 
 	onMount(() => {
 		setBreadcrumb([{ label: '设置' }]);
-		frontendToken = api.getAuthToken() || '';
 		loadConfig();
 	});
 </script>
@@ -240,47 +282,46 @@
 </svelte:head>
 
 <div class="space-y-6">
-	<!-- 前端认证状态栏 -->
-	<div class="bg-card rounded-lg border p-4">
-		<div class="flex items-center justify-between">
-			<div class="space-y-1">
-				<h2 class="font-semibold">前端认证状态</h2>
-				<p class="text-muted-foreground text-sm">
-					{formData ? '已认证 - 可以正常加载数据' : '未认证 - 请输入 Token 进行鉴权'}
-				</p>
+	<section class="bg-card space-y-4 rounded-lg border p-4" aria-label="访问与密码">
+		<h2 class="font-semibold">访问与密码</h2>
+		<p class="text-muted-foreground text-sm">
+			观看和管理共用管理员登录。修改密码后，其他设备需重新登录。
+		</p>
+		<form onsubmit={changePassword} class="grid gap-4 sm:grid-cols-3">
+			<div class="space-y-2">
+				<Label for="current-password">当前密码</Label><Input
+					id="current-password"
+					type="password"
+					bind:value={currentPassword}
+					required
+					autocomplete="current-password"
+				/>
 			</div>
-			{#if !formData}
-				<div class="flex gap-3">
-					<PasswordInput bind:value={frontendToken} placeholder="输入认证Token" />
-					<Button onclick={authenticateFrontend} disabled={!frontendToken.trim()}>认证</Button>
-				</div>
-			{:else}
-				<div class="flex items-center gap-3">
-					<div class="flex items-center gap-2">
-						<div class="h-2 w-2 rounded-full bg-emerald-500"></div>
-						<span class="text-sm text-emerald-600">已认证</span>
-					</div>
-					<Button
-						variant="outline"
-						size="sm"
-						onclick={async () => {
-							try {
-								await api.clearAuthToken();
-								frontendToken = '';
-								formData = null;
-								config = null;
-							} catch {
-								toast.error('退出未完成，请检查网络后重试');
-							}
-						}}
-					>
-						退出认证
-					</Button>
-				</div>
-			{/if}
-		</div>
-	</div>
-
+			<div class="space-y-2">
+				<Label for="new-password">新密码</Label><Input
+					id="new-password"
+					type="password"
+					bind:value={newPassword}
+					required
+					minlength={15}
+					maxlength={128}
+					autocomplete="new-password"
+				/>
+			</div>
+			<div class="space-y-2">
+				<Label for="confirm-password">再次输入新密码</Label><Input
+					id="confirm-password"
+					type="password"
+					bind:value={confirmPassword}
+					required
+					minlength={15}
+					maxlength={128}
+					autocomplete="new-password"
+				/>
+			</div>
+			<Button type="submit" disabled={changingPassword}>修改密码</Button>
+		</form>
+	</section>
 	<!-- 应用配置 -->
 	{#if loading}
 		<div class="flex items-center justify-center py-16">
@@ -363,20 +404,6 @@
 						</div>
 					</div>
 
-					<div class="space-y-4">
-						<div class="space-y-2">
-							<Label for="backend-auth-token">后端 API 认证Token</Label>
-							<PasswordInput
-								id="backend-auth-token"
-								placeholder="设置后端 API 认证Token"
-								bind:value={formData.auth_token}
-							/>
-							<p class="text-muted-foreground text-xs">
-								修改此Token后，前端需要使用新Token重新认证才能访问API
-							</p>
-						</div>
-					</div>
-
 					<Separator />
 
 					<div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -424,10 +451,17 @@
 
 				<!-- B站认证 -->
 				<Tabs.Content value="auth" class="mt-6 space-y-6">
+					<p class="text-muted-foreground text-sm">
+						{formData.credential_configured
+							? 'B 站凭据已配置。为保护账号，此处不回显；普通设置保存会保留原凭据。'
+							: '尚未配置 B 站凭据。'}
+					</p>
 					<div class="flex items-center justify-between">
 						<div class="space-y-1">
 							<Label class="text-base font-semibold">快速登录</Label>
-							<p class="text-muted-foreground text-sm">使用哔哩哔哩 APP 扫码登录，自动填充凭据</p>
+							<p class="text-muted-foreground text-sm">
+								使用哔哩哔哩 APP 扫码登录，凭据仅保存在服务器
+							</p>
 						</div>
 						<Button
 							onclick={() => {
@@ -444,14 +478,15 @@
 
 					<Separator />
 
-					<!-- 原有的手动输入 Cookie 表单 -->
+					<Button onclick={saveCredential} disabled={credentialSaving}>保存 B 站凭据</Button>
+					<!-- 手动替换完整 Cookie -->
 					<div class="space-y-4">
 						<div class="space-y-2">
 							<Label for="sessdata">SESSDATA</Label>
 							<PasswordInput
 								id="sessdata"
 								placeholder="请输入SESSDATA"
-								bind:value={formData.credential.sessdata}
+								bind:value={credential.sessdata}
 							/>
 						</div>
 						<div class="space-y-2">
@@ -459,7 +494,7 @@
 							<PasswordInput
 								id="bili-jct"
 								placeholder="请输入bili_jct"
-								bind:value={formData.credential.bili_jct}
+								bind:value={credential.bili_jct}
 							/>
 						</div>
 						<div class="space-y-2">
@@ -467,7 +502,7 @@
 							<PasswordInput
 								id="buvid3"
 								placeholder="请输入buvid3"
-								bind:value={formData.credential.buvid3}
+								bind:value={credential.buvid3}
 							/>
 						</div>
 						<div class="space-y-2">
@@ -475,7 +510,7 @@
 							<PasswordInput
 								id="dedeuserid"
 								placeholder="请输入dedeuserid"
-								bind:value={formData.credential.dedeuserid}
+								bind:value={credential.dedeuserid}
 							/>
 						</div>
 						<div class="space-y-2">
@@ -483,7 +518,7 @@
 							<PasswordInput
 								id="ac-time-value"
 								placeholder="请输入ac_time_value"
-								bind:value={formData.credential.ac_time_value}
+								bind:value={credential.ac_time_value}
 							/>
 						</div>
 					</div>
@@ -745,7 +780,7 @@
 							<Button onclick={openAddNotifierDialog}>+ 添加通知器</Button>
 						</div>
 
-						{#if !formData.notifiers || formData.notifiers.length === 0}
+						{#if !notifiers || notifiers.length === 0}
 							<div class="rounded-lg border-2 border-dashed py-12 text-center">
 								<p class="text-muted-foreground">暂无通知器配置</p>
 								<Button class="mt-4" variant="outline" onclick={openAddNotifierDialog}>
@@ -754,7 +789,7 @@
 							</div>
 						{:else}
 							<div class="space-y-3">
-								{#each formData.notifiers as notifier, index (index)}
+								{#each notifiers as notifier, index (index)}
 									<div class="flex items-center justify-between rounded-lg border p-4">
 										<div class="flex-1">
 											{#if notifier.type === 'telegram'}
@@ -768,7 +803,7 @@
 												<div class="flex items-center gap-2">
 													<Badge variant="secondary">Webhook</Badge>
 													<span class="text-muted-foreground text-sm">
-														{notifier.url}
+														{notifier.configured?.url ? 'URL 已配置' : 'URL 未配置'}
 													</span>
 												</div>
 											{:else if notifier.type === 'smtp'}
@@ -946,7 +981,8 @@
 	{:else}
 		<div class="flex items-center justify-center py-16">
 			<div class="space-y-4 text-center">
-				<p class="text-muted-foreground">请先进行前端认证以加载配置</p>
+				<p class="text-muted-foreground">配置加载失败，请重试</p>
+				<Button onclick={loadConfig}>重新加载</Button>
 			</div>
 		</div>
 	{/if}
@@ -968,6 +1004,7 @@
 			{#if showNotifierDialog}
 				<NotifierDialog
 					notifier={editingNotifier}
+					busy={notifierSaving}
 					onSave={(notifier) => {
 						if (isEditing && editingNotifierIndex !== null) {
 							updateNotifier(editingNotifierIndex, notifier);
