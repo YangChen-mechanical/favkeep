@@ -58,6 +58,8 @@ tokio-stream = { workspace = true }
 tokio-util = { workspace = true }
 toml = { workspace = true }
 tower = { workspace = true }
+tower-http = { workspace = true }
+tower-sessions = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 ua_generator = { workspace = true }
@@ -67,6 +69,9 @@ validator = { workspace = true }
 [build-dependencies]
 built = { workspace = true }
 git2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
 
 [package.metadata.release]
 release = true

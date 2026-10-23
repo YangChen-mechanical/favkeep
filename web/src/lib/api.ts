@@ -4,6 +4,7 @@ import type {
 	ClearAndResetVideoResponse,
 	CollectionsResponse,
 	Config,
+	ContinueWatchingItem,
 	DashBoardResponse,
 	FavoritesResponse,
 	FullSyncVideoSourceRequest,
@@ -31,7 +32,9 @@ import type {
 	VideoSourcesDetailsResponse,
 	VideoSourcesResponse,
 	VideosRequest,
-	VideosResponse
+	VideosResponse,
+	WatchProgress,
+	WatchProgressUpdate
 } from './types';
 import { wsManager } from './ws';
 
@@ -70,7 +73,12 @@ class ApiClient {
 	}
 
 	// 清除认证 token
-	clearAuthToken() {
+	async clearAuthToken() {
+		try {
+			await this.request('/media-session', 'DELETE');
+		} catch (error) {
+			if ((error as ApiError).status !== 401) throw error;
+		}
 		delete this.defaultHeaders['Authorization'];
 		localStorage.removeItem('authToken');
 		// 断开 WebSocket 连接，因为 token 已经无效
@@ -163,6 +171,25 @@ class ApiClient {
 
 	async getVideo(id: number): Promise<ApiResponse<VideoResponse>> {
 		return this.get<VideoResponse>(`/videos/${id}`);
+	}
+
+	async openMediaSession(): Promise<ApiResponse<null>> {
+		return this.post<null>('/media-session');
+	}
+
+	async getContinueWatching(): Promise<ApiResponse<ContinueWatchingItem[]>> {
+		return this.get<ContinueWatchingItem[]>('/continue-watching');
+	}
+
+	async getWatchProgress(id: number): Promise<ApiResponse<WatchProgress | null>> {
+		return this.get<WatchProgress | null>(`/watch-progress/${id}`);
+	}
+
+	async saveWatchProgress(
+		id: number,
+		data: WatchProgressUpdate
+	): Promise<ApiResponse<WatchProgress>> {
+		return this.put<WatchProgress>(`/watch-progress/${id}`, data);
 	}
 
 	async resetVideoStatus(
@@ -314,6 +341,11 @@ const api = {
 	getVideoSources: () => apiClient.getVideoSources(),
 	getVideos: (params?: VideosRequest) => apiClient.getVideos(params),
 	getVideo: (id: number) => apiClient.getVideo(id),
+	openMediaSession: () => apiClient.openMediaSession(),
+	getContinueWatching: () => apiClient.getContinueWatching(),
+	getWatchProgress: (id: number) => apiClient.getWatchProgress(id),
+	saveWatchProgress: (id: number, data: WatchProgressUpdate) =>
+		apiClient.saveWatchProgress(id, data),
 	resetVideoStatus: (id: number, request: ResetVideoStatusRequest) =>
 		apiClient.resetVideoStatus(id, request),
 	clearAndResetVideoStatus: (id: number) => apiClient.clearAndResetVideoStatus(id),

@@ -9,3 +9,4 @@ pub mod page;
 pub mod submission;
 pub mod video;
 pub mod watch_later;
+pub mod watch_progress;

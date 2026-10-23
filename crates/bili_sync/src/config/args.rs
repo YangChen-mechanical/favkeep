@@ -23,6 +23,10 @@ pub struct Args {
 
     #[arg(short, long, env = "BILI_SYNC_FFMPEG_PATH")]
     pub ffmpeg_path: Option<String>,
+
+    /// Only enable for local HTTP development; public deployments require HTTPS.
+    #[arg(long, env = "FAVKEEP_INSECURE_COOKIES")]
+    pub insecure_cookies: bool,
 }
 
 mod built_info {

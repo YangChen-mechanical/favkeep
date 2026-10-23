@@ -10,14 +10,16 @@ use sea_orm::ActiveValue::Set;
 use sea_orm::sea_query::{Expr, ExprTrait};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, IntoActiveModel, PaginatorTrait, QueryFilter,
-    QueryOrder, Select, TransactionTrait, TryIntoModel,
+    QueryOrder, QuerySelect, QueryTrait, Select, TransactionTrait, TryIntoModel,
 };
 
 use crate::api::error::InnerApiError;
 use crate::api::helper::{update_page_download_status, update_video_download_status};
+mod watch;
+
 use crate::api::request::{
     ResetFilteredVideoStatusRequest, ResetVideoStatusRequest, UpdateFilteredVideoStatusRequest,
-    UpdateVideoStatusRequest, VideosRequest,
+    UpdateVideoStatusRequest, VideosRequest, WatchSort, WatchState,
 };
 use crate::api::response::{
     ClearAndResetVideoStatusResponse, PageInfo, ResetFilteredVideosResponse, ResetVideoResponse, SimplePageInfo,
@@ -67,6 +69,30 @@ pub async fn get_videos(
     Query(params): Query<VideosRequest>,
 ) -> Result<ApiResponse<VideosResponse>, ApiError> {
     let mut query = video::Entity::find();
+    if let Some(state) = params.watch_state {
+        let having = match state {
+            WatchState::Watched => "SUM(COALESCE(w.completed,0)) = COUNT(*)",
+            WatchState::Unwatched => "SUM(CASE WHEN w.completed OR w.position_ms > 0 THEN 1 ELSE 0 END) = 0",
+            WatchState::InProgress => "SUM(CASE WHEN w.completed OR w.position_ms > 0 THEN 1 ELSE 0 END) > 0 AND SUM(COALESCE(w.completed,0)) < COUNT(*)",
+        };
+        query = query.filter(Expr::cust(format!(
+            "video.id IN (SELECT p.video_id FROM page p LEFT JOIN watch_progress w ON w.page_id=p.id
+             WHERE ((p.download_status >> 3) & 7)=7 AND lower(p.path) LIKE '%.mp4'
+             GROUP BY p.video_id HAVING {having})"
+        )));
+    }
+    if params.saved_only == Some(true) {
+        query = query.filter(
+            video::Column::Id.in_subquery(
+                page::Entity::find()
+                    .select_only()
+                    .column(page::Column::VideoId)
+                    .filter(PageStatus::query_builder().subtask_succeeded(1))
+                    .filter(page::Column::Path.ends_with(".mp4"))
+                    .into_query(),
+            ),
+        );
+    }
     for (field, column) in [
         (params.collection, video::Column::CollectionId),
         (params.favorite, video::Column::FavoriteId),
@@ -81,7 +107,8 @@ pub async fn get_videos(
         query = query.filter(
             video::Column::Name
                 .contains(&query_word)
-                .or(video::Column::Bvid.contains(query_word)),
+                .or(video::Column::Bvid.contains(&query_word))
+                .or(video::Column::UpperName.contains(query_word)),
         );
     }
     if let Some(status_filter) = params.status_filter {
@@ -97,14 +124,23 @@ pub async fn get_videos(
     } else {
         (0, 10)
     };
-    Ok(ApiResponse::ok(VideosResponse {
-        videos: query
-            .order_by_desc(video::Column::Id)
+    query = match params.sort {
+        Some(WatchSort::Added) => query.order_by_desc(video::Column::CreatedAt).order_by_desc(video::Column::Id),
+        Some(WatchSort::Title) => query.order_by_asc(video::Column::Name).order_by_asc(video::Column::Id),
+        None => query.order_by_desc(video::Column::Id),
+    };
+    let videos = query
             .into_partial_model::<VideoInfo>()
             .paginate(&db, page_size)
             .fetch_page(page)
-            .await?,
+            .await?;
+    let watch_summaries = if params.saved_only == Some(true) {
+        Some(watch::summaries(&db, &videos.iter().map(|v| v.id).collect::<Vec<_>>()).await?)
+    } else { None };
+    Ok(ApiResponse::ok(VideosResponse {
+        videos,
         total_count,
+        watch_summaries,
     }))
 }
 
@@ -116,7 +152,8 @@ pub async fn get_video(
         video::Entity::find_by_id(id).into_partial_model::<VideoInfo>().one(&db),
         page::Entity::find()
             .filter(page::Column::VideoId.eq(id))
-            .order_by_asc(page::Column::Cid)
+            .order_by_asc(page::Column::Pid)
+            .order_by_asc(page::Column::Id)
             .into_partial_model::<PageInfo>()
             .all(&db)
     )?;
@@ -125,6 +162,14 @@ pub async fn get_video(
     };
     Ok(ApiResponse::ok(VideoResponse {
         video: video_info,
+        watch_progress: watch_progress::Entity::find()
+            .filter(watch_progress::Column::PageId.is_in(pages_info.iter().map(|p| p.id)))
+            .all(&db).await?,
+        playable_page_ids: page::Entity::find().filter(page::Column::VideoId.eq(id))
+            .filter(PageStatus::query_builder().subtask_succeeded(1))
+            .filter(page::Column::Path.ends_with(".mp4"))
+            .all(&db).await?.iter().map(|p| p.id).collect(),
+        watch_summary: watch::summaries(&db, &[id]).await?.pop(),
         pages: pages_info,
     }))
 }
@@ -441,4 +486,100 @@ pub async fn update_filtered_video_status(
         updated_videos_count: all_videos.len(),
         updated_pages_count: all_pages.len(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Request, StatusCode};
+    use bili_sync_migration::{Migrator, MigratorTrait};
+    use sea_orm::Database;
+    use serde_json::{Value, json};
+    use tower::ServiceExt;
+
+    async fn list(db: &DatabaseConnection, params: &str) -> Value {
+        let response = router()
+            .layer(Extension(db.clone()))
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/videos?{params}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice::<Value>(&bytes).unwrap()["data"].take()
+    }
+
+    #[tokio::test]
+    async fn saved_only_filters_before_pagination_without_changing_existing_queries() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        for id in 1..=8 {
+            video::ActiveModel::from(video::Model {
+                id,
+                name: format!("Video {id}"),
+                bvid: format!("BV{id}"),
+                // Saved files remain watchable even if the source is now invalid or skipped.
+                valid: false,
+                should_download: false,
+                ..Default::default()
+            })
+            .insert(&db)
+            .await
+            .unwrap();
+        }
+        for (id, video_id, path, status) in [
+            (1, 1, Some("partial.mp4"), 0),
+            (2, 1, Some("saved.mp4"), 1 | (7 << 3) | (1 << 12)),
+            (3, 2, Some("saved.MP4"), 7 << 3),
+            (4, 4, None, 7 << 3),
+            (5, 5, Some("saved.mkv"), 7 << 3),
+            (6, 6, Some("unfinished.mp4"), 0),
+            (7, 7, Some(""), 7 << 3),
+            (8, 8, Some("first.mp4"), 7 << 3),
+            (9, 8, Some("second.mp4"), 7 << 3),
+        ] {
+            page::ActiveModel {
+                id: Set(id),
+                video_id: Set(video_id),
+                cid: Set(id.into()),
+                pid: Set(id),
+                name: Set(format!("Part {id}")),
+                duration: Set(60),
+                path: Set(path.map(str::to_owned)),
+                download_status: Set(status),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+        }
+
+        let first = list(&db, "saved_only=true&page=0&page_size=2").await;
+        assert_eq!(first["total_count"], 3);
+        assert_eq!(first["videos"][0]["id"], 8);
+        assert_eq!(first["videos"][1]["id"], 2);
+        let second = list(&db, "saved_only=true&page=1&page_size=2").await;
+        assert_eq!(second["total_count"], 3);
+        assert_eq!(second["videos"].as_array().unwrap().len(), 1);
+        assert_eq!(second["videos"][0]["id"], 1);
+        assert_eq!(
+            list(&db, "saved_only=true&page=2&page_size=2").await["videos"],
+            json!([])
+        );
+        for query in ["Video%201", "BV1"] {
+            let found = list(&db, &format!("saved_only=true&query={query}")).await;
+            assert_eq!(found["total_count"], 1);
+            assert_eq!(found["videos"][0]["id"], 1);
+        }
+        assert_eq!(list(&db, "saved_only=true&query=BV3").await["total_count"], 0);
+        let existing = list(&db, "page=0&page_size=20").await;
+        assert_eq!(existing["total_count"], 8);
+        assert_eq!(existing, list(&db, "saved_only=false&page=0&page_size=20").await);
+        assert_eq!(list(&db, "query=BV3").await["total_count"], 1);
+    }
 }

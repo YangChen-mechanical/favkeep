@@ -263,11 +263,15 @@
 					<Button
 						variant="outline"
 						size="sm"
-						onclick={() => {
-							formData = null;
-							config = null;
-							api.clearAuthToken();
-							frontendToken = '';
+						onclick={async () => {
+							try {
+								await api.clearAuthToken();
+								frontendToken = '';
+								formData = null;
+								config = null;
+							} catch {
+								toast.error('退出未完成，请检查网络后重试');
+							}
 						}}
 					>
 						退出认证

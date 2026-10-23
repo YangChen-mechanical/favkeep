@@ -78,6 +78,11 @@
 		],
 		footer: [
 			{
+				title: '进入观看',
+				icon: FilePlayIcon,
+				href: '/watch'
+			},
+			{
 				title: '设置',
 				icon: Settings2Icon,
 				href: '/settings'

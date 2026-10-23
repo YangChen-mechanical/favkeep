@@ -22,7 +22,25 @@ pub enum ValidationFilter {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchState {
+    Unwatched,
+    InProgress,
+    Watched,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchSort {
+    Added,
+    Title,
+}
+
+#[derive(Deserialize)]
 pub struct VideosRequest {
+    pub saved_only: Option<bool>,
+    pub watch_state: Option<WatchState>,
+    pub sort: Option<WatchSort>,
     pub collection: Option<i32>,
     pub favorite: Option<i32>,
     pub submission: Option<i32>,

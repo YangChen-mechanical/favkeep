@@ -19,12 +19,27 @@ pub struct VideoSourcesResponse {
 pub struct VideosResponse {
     pub videos: Vec<VideoInfo>,
     pub total_count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub watch_summaries: Option<Vec<WatchSummary>>,
 }
 
 #[derive(Serialize)]
 pub struct VideoResponse {
     pub video: VideoInfo,
     pub pages: Vec<PageInfo>,
+    pub watch_progress: Vec<watch_progress::Model>,
+    pub playable_page_ids: Vec<i32>,
+    pub watch_summary: Option<WatchSummary>,
+}
+
+#[derive(Serialize)]
+pub struct WatchSummary {
+    pub video_id: i32,
+    pub duration: u64,
+    pub page_count: usize,
+    pub watch_state: &'static str,
+    pub resume_page_id: i32,
+    pub resume_position_ms: i64,
 }
 
 #[derive(Serialize)]
@@ -91,6 +106,7 @@ pub struct PageInfo {
     pub video_id: i32,
     pub pid: i32,
     pub name: String,
+    pub duration: u32,
     #[serde(serialize_with = "serde_page_download_status")]
     pub download_status: u32,
 }

@@ -7,13 +7,15 @@ use axum::http::header;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Extension, ServiceExt};
+use cookie::time::Duration;
 use reqwest::StatusCode;
 use rust_embed_for_web::{EmbedableFile, RustEmbed};
 use sea_orm::DatabaseConnection;
+use tower_sessions::{Expiry, MemoryStore, SessionManagerLayer};
 
 use crate::api::{LogHelper, router};
 use crate::bilibili::BiliClient;
-use crate::config::{VersionedConfig, default_bind_address};
+use crate::config::{ARGS, VersionedConfig, default_bind_address};
 
 #[derive(RustEmbed)]
 #[preserve_source = false]
@@ -25,11 +27,19 @@ pub async fn http_server(
     bili_client: Arc<BiliClient>,
     log_writer: LogHelper,
 ) -> Result<()> {
+    // shortcut: in-memory playback sessions require login after restart; use a persistent store when full login is added.
+    let sessions = SessionManagerLayer::new(MemoryStore::default())
+        .with_name("favkeep_media")
+        .with_secure(!ARGS.insecure_cookies)
+        .with_http_only(true)
+        .with_same_site(cookie::SameSite::Strict)
+        .with_expiry(Expiry::OnInactivity(Duration::days(1)));
     let app = router()
         .fallback_service(get(frontend_files).head(frontend_files))
         .layer(Extension(database_connection))
         .layer(Extension(bili_client))
-        .layer(Extension(log_writer));
+        .layer(Extension(log_writer))
+        .layer(sessions);
     let (bind_address, listener) = {
         let bind_address = VersionedConfig::get().read().bind_address.to_owned();
         let listen_res = tokio::net::TcpListener::bind(&bind_address)

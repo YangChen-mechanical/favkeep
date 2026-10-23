@@ -37,11 +37,10 @@
 		try {
 			const result = await api.getVideo(videoId);
 			videoData = result.data;
-		} catch (error) {
-			console.error('加载视频详情失败：', error);
-			toast.error('加载视频详情失败', {
-				description: (error as ApiError).message
-			});
+		} catch (cause) {
+			videoData = null;
+			error = (cause as ApiError).message;
+			toast.error('加载视频详情失败', { description: error });
 		} finally {
 			loading = false;
 		}
@@ -168,6 +167,7 @@
 		<div class="mb-4 flex items-center justify-between">
 			<h2 class="text-xl font-semibold">视频信息</h2>
 			<div class="flex gap-2">
+				<Button size="sm" variant="outline" href="/watch/{videoData.video.id}">前往播放</Button>
 				<Button
 					size="sm"
 					variant="outline"

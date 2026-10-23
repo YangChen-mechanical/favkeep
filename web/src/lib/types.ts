@@ -4,6 +4,7 @@ export interface ApiResponse<T> {
 }
 
 export interface VideosRequest {
+	saved_only?: boolean;
 	collection?: number;
 	favorite?: number;
 	submission?: number;
@@ -52,7 +53,28 @@ export interface PageInfo {
 	id: number;
 	pid: number;
 	name: string;
+	duration: number;
 	download_status: [number, number, number, number, number];
+}
+
+export interface WatchProgress {
+	page_id: number;
+	position_ms: number;
+	completed: boolean;
+	revision: number;
+	updated_at: string;
+}
+
+export type WatchProgressUpdate = Pick<WatchProgress, 'position_ms' | 'completed' | 'revision'>;
+
+export interface ContinueWatchingItem {
+	page_id: number;
+	video_id: number;
+	video_name: string;
+	page_name: string;
+	pid: number;
+	position_ms: number;
+	duration: number;
 }
 
 export interface VideoResponse {
