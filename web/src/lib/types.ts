@@ -5,6 +5,8 @@ export interface ApiResponse<T> {
 
 export interface VideosRequest {
 	saved_only?: boolean;
+	watch_state?: WatchState;
+	sort?: 'added' | 'title';
 	collection?: number;
 	favorite?: number;
 	submission?: number;
@@ -47,6 +49,17 @@ export interface VideoInfo {
 export interface VideosResponse {
 	videos: VideoInfo[];
 	total_count: number;
+	watch_summaries?: WatchSummary[];
+}
+
+export type WatchState = 'unwatched' | 'in_progress' | 'watched';
+export interface WatchSummary {
+	video_id: number;
+	duration: number;
+	page_count: number;
+	watch_state: WatchState;
+	resume_page_id: number;
+	resume_position_ms: number;
 }
 
 export interface PageInfo {
@@ -72,6 +85,7 @@ export interface ContinueWatchingItem {
 	video_id: number;
 	video_name: string;
 	page_name: string;
+	upper_name: string;
 	pid: number;
 	position_ms: number;
 	duration: number;
@@ -80,6 +94,9 @@ export interface ContinueWatchingItem {
 export interface VideoResponse {
 	video: VideoInfo;
 	pages: PageInfo[];
+	watch_progress?: WatchProgress[];
+	playable_page_ids?: number[];
+	watch_summary?: WatchSummary | null;
 }
 
 export interface ResetVideoResponse {

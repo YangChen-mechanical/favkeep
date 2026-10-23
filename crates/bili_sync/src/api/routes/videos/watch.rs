@@ -29,21 +29,45 @@ pub(super) async fn summaries(db: &DatabaseConnection, video_ids: &[i32]) -> Res
     for p in &pages {
         grouped.entry(p.video_id).or_default().push(p);
     }
-    Ok(video_ids.iter().filter_map(|id| {
-        let parts = grouped.get(id)?;
-        let completed = parts.iter().filter(|p| records.get(&p.id).is_some_and(|w| w.completed)).count();
-        let started = parts.iter().any(|p| records.get(&p.id).is_some_and(|w| w.completed || w.position_ms > 0));
-        let resume = parts.iter()
-            .filter_map(|p| records.get(&p.id))
-            .filter(|w| !w.completed && w.position_ms > 0)
-            .max_by_key(|w| (w.updated_at, w.page_id));
-        Some(WatchSummary {
-            video_id: *id,
-            duration: parts.iter().map(|p| u64::from(p.duration)).sum(),
-            page_count: parts.len(),
-            watch_state: if completed == parts.len() { "watched" } else if started { "in_progress" } else { "unwatched" },
-            resume_page_id: resume.map_or(parts[0].id, |w| w.page_id),
-            resume_position_ms: resume.map_or(0, |w| w.position_ms),
+    Ok(video_ids
+        .iter()
+        .filter_map(|id| {
+            let parts = grouped.get(id)?;
+            let completed = parts
+                .iter()
+                .filter(|p| records.get(&p.id).is_some_and(|w| w.completed))
+                .count();
+            let started = parts
+                .iter()
+                .any(|p| records.get(&p.id).is_some_and(|w| w.completed || w.position_ms > 0));
+            let resume = parts
+                .iter()
+                .filter_map(|p| records.get(&p.id))
+                .filter(|w| !w.completed && w.position_ms > 0)
+                .max_by_key(|w| (w.updated_at, w.page_id));
+            Some(WatchSummary {
+                video_id: *id,
+                duration: parts.iter().map(|p| u64::from(p.duration)).sum(),
+                page_count: parts.len(),
+                watch_state: if completed == parts.len() {
+                    "watched"
+                } else if started {
+                    "in_progress"
+                } else {
+                    "unwatched"
+                },
+                resume_page_id: resume.map_or_else(
+                    || {
+                        parts
+                            .iter()
+                            .find(|p| !records.get(&p.id).is_some_and(|w| w.completed))
+                            .unwrap_or(&parts[0])
+                            .id
+                    },
+                    |w| w.page_id,
+                ),
+                resume_position_ms: resume.map_or(0, |w| w.position_ms),
+            })
         })
-    }).collect())
+        .collect())
 }
