@@ -80,10 +80,10 @@ async fn local_image(root: &FilePath, candidates: Vec<PathBuf>) -> Option<Vec<u8
         let Ok(path) = tokio::fs::canonicalize(candidate).await else {
             continue;
         };
-        if path.starts_with(&root) {
-            if let Some(bytes) = read_image(&path).await {
-                return Some(bytes);
-            }
+        if path.starts_with(&root)
+            && let Some(bytes) = read_image(&path).await
+        {
+            return Some(bytes);
         }
     }
     None
@@ -97,11 +97,11 @@ async fn load_cover(video: &video::Model, pages: &[page::Model], cache: &FilePat
     let root = FilePath::new(&video.path);
     let mut candidates = vec![root.join("poster.jpg")];
     for p in pages {
-        if let Some(path) = p.path.as_deref().map(FilePath::new) {
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                candidates.push(path.with_file_name(format!("{stem}-poster.jpg")));
-                candidates.push(path.with_file_name(format!("{stem}-thumb.jpg")));
-            }
+        if let Some(path) = p.path.as_deref().map(FilePath::new)
+            && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+        {
+            candidates.push(path.with_file_name(format!("{stem}-poster.jpg")));
+            candidates.push(path.with_file_name(format!("{stem}-thumb.jpg")));
         }
     }
     if let Some(bytes) = local_image(root, candidates).await {

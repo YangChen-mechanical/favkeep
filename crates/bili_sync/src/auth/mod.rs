@@ -462,10 +462,10 @@ async fn login(
     };
     let verified = state.password(input.password, Some(encoded)).await;
     if username != input.username || verified.is_err() {
-        if let Err(error) = verified {
-            if error.0 != StatusCode::UNAUTHORIZED {
-                return Err(error);
-            }
+        if let Err(error) = verified
+            && error.0 != StatusCode::UNAUTHORIZED
+        {
+            return Err(error);
         }
         state.failed(&ip);
         return Err(AuthError(StatusCode::UNAUTHORIZED, "用户名或密码错误"));
