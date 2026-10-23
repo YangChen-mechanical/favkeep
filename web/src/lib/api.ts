@@ -90,7 +90,8 @@ class ApiClient {
 		url: string,
 		method: string = 'GET',
 		body?: unknown,
-		params?: Record<string, unknown>
+		params?: Record<string, unknown>,
+		keepalive = false
 	): Promise<ApiResponse<T>> {
 		// 构建完整的 URL
 		let fullUrl = `${this.baseURL}${url}`;
@@ -109,6 +110,7 @@ class ApiClient {
 
 		const config: RequestInit = {
 			method,
+			keepalive,
 			headers: this.defaultHeaders
 		};
 
@@ -187,9 +189,10 @@ class ApiClient {
 
 	async saveWatchProgress(
 		id: number,
-		data: WatchProgressUpdate
+		data: WatchProgressUpdate,
+		keepalive = false
 	): Promise<ApiResponse<WatchProgress>> {
-		return this.put<WatchProgress>(`/watch-progress/${id}`, data);
+		return this.request<WatchProgress>(`/watch-progress/${id}`, 'PUT', data, undefined, keepalive);
 	}
 
 	async resetVideoStatus(
@@ -344,8 +347,8 @@ const api = {
 	openMediaSession: () => apiClient.openMediaSession(),
 	getContinueWatching: () => apiClient.getContinueWatching(),
 	getWatchProgress: (id: number) => apiClient.getWatchProgress(id),
-	saveWatchProgress: (id: number, data: WatchProgressUpdate) =>
-		apiClient.saveWatchProgress(id, data),
+	saveWatchProgress: (id: number, data: WatchProgressUpdate, keepalive = false) =>
+		apiClient.saveWatchProgress(id, data, keepalive),
 	resetVideoStatus: (id: number, request: ResetVideoStatusRequest) =>
 		apiClient.resetVideoStatus(id, request),
 	clearAndResetVideoStatus: (id: number) => apiClient.clearAndResetVideoStatus(id),

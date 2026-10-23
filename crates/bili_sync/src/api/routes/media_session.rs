@@ -58,6 +58,17 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .uri("/api/media/videos/999/cover")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
                     .method("POST")
                     .uri("/api/media-session")
                     .header(header::AUTHORIZATION, &token)
@@ -79,6 +90,18 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/media/pages/999")
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/media/videos/999/cover")
                     .header(header::COOKIE, &cookie)
                     .body(Body::empty())
                     .unwrap(),
@@ -113,15 +136,39 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .uri("/api/media/pages/999")
-                    .header(header::COOKIE, cookie)
+                    .header(header::COOKIE, &cookie)
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/media/videos/999/cover")
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/media/videos/999/cover")
+                    .header(header::AUTHORIZATION, &token)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

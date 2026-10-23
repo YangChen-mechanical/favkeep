@@ -1,0 +1,244 @@
+.watch-shell {
+	font-family:
+		ui-sans-serif,
+		system-ui,
+		-apple-system,
+		'Segoe UI',
+		'Microsoft YaHei',
+		sans-serif;
+	--background: #f6f7fb;
+	--foreground: #172033;
+	--card: #fff;
+	--card-foreground: #172033;
+	--primary: #2563eb;
+	--primary-foreground: #fff;
+	--muted: #edf0f5;
+	--muted-foreground: #68758c;
+	--border: #e4e8f0;
+	--input: #d9e0eb;
+	--accent: #edf2ff;
+	--accent-foreground: #1d4ed8;
+	--watch-bg: #f6f7fb;
+	--watch-surface: #fff;
+	--watch-text: #172033;
+	--watch-muted: #68758c;
+	--watch-accent: #2563eb;
+	--watch-line: #e4e8f0;
+	--watch-placeholder: #e5eaf2;
+	min-height: 100svh;
+	background: var(--watch-bg);
+	color: var(--watch-text);
+}
+.dark .watch-shell {
+	--background: #101623;
+	--foreground: #e9edf5;
+	--card: #192233;
+	--card-foreground: #e9edf5;
+	--primary: #73a5ff;
+	--primary-foreground: #101623;
+	--muted: #222e43;
+	--muted-foreground: #a3afc4;
+	--border: #2c384d;
+	--input: #3a4860;
+	--accent: #24334e;
+	--accent-foreground: #a8c8ff;
+	--watch-bg: #101623;
+	--watch-surface: #192233;
+	--watch-text: #e9edf5;
+	--watch-muted: #a3afc4;
+	--watch-accent: #73a5ff;
+	--watch-line: #2c384d;
+	--watch-placeholder: #253149;
+}
+.watch-shell .watch-header {
+	position: sticky;
+	top: 0;
+	z-index: 30;
+	background: var(--watch-surface);
+	border-bottom: 1px solid var(--watch-line);
+}
+.watch-shell .watch-nav {
+	height: 76px;
+	max-width: 1440px;
+	margin: auto;
+	padding: 0 32px;
+	display: flex;
+	align-items: center;
+	gap: 32px;
+}
+.watch-shell .watch-brand {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-shrink: 0;
+	font-size: 24px;
+	font-weight: 750;
+	letter-spacing: -0.8px;
+	border-radius: 6px;
+}
+.watch-shell .brand-icon {
+	display: grid;
+	place-items: center;
+	width: 34px;
+	height: 34px;
+	border-radius: 10px;
+	background: #2563eb;
+	color: white;
+}
+.watch-shell .brand-dot {
+	color: var(--watch-accent);
+}
+.watch-shell .header-search {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	max-width: 480px;
+	flex: 1;
+	height: 40px;
+	margin-left: auto;
+	background: var(--watch-bg);
+	border: 1px solid var(--watch-line);
+	border-radius: 10px;
+	padding-left: 13px;
+	color: var(--watch-muted);
+}
+.watch-shell .header-search:focus-within {
+	border-color: var(--watch-accent);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--watch-accent) 12%, transparent);
+}
+.watch-shell .header-search input {
+	min-width: 0;
+	flex: 1;
+	outline: none;
+	background: transparent;
+	height: 100%;
+	color: var(--watch-text);
+	font-size: 13px;
+}
+.watch-shell .header-search button {
+	flex-shrink: 0;
+	height: 100%;
+	padding: 0 12px;
+	color: var(--watch-accent);
+	font-size: 12px;
+	font-weight: 600;
+}
+.watch-shell .header-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+}
+.watch-shell .watch-content {
+	max-width: 1440px;
+	margin: 0 auto;
+	padding: 32px;
+}
+.watch-shell .section-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	margin-bottom: 18px;
+}
+.watch-shell .section-heading h1,
+.watch-shell .section-heading h2 {
+	font-size: 20px;
+	font-weight: 700;
+	letter-spacing: -0.5px;
+}
+.watch-shell .section-heading p {
+	color: var(--watch-muted);
+	font-size: 12px;
+	margin-top: 4px;
+}
+.watch-shell .watch-empty {
+	min-height: 320px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	text-align: center;
+	gap: 16px;
+	padding: 32px 16px;
+}
+.watch-shell .watch-empty h1,
+.watch-shell .watch-empty h2 {
+	font-size: 20px;
+	font-weight: 650;
+}
+.watch-shell .watch-empty p {
+	color: var(--watch-muted);
+	font-size: 14px;
+	max-width: 360px;
+	line-height: 1.7;
+}
+.watch-shell .empty-icon {
+	width: 64px;
+	height: 64px;
+	display: grid;
+	place-items: center;
+	border-radius: 20px;
+	background: var(--accent);
+	color: var(--watch-accent);
+}
+.watch-shell .connection-loading {
+	padding: 60px 0;
+	color: var(--watch-muted);
+	text-align: center;
+}
+.watch-shell a:focus-visible,
+.watch-shell button:focus-visible,
+.watch-shell select:focus-visible {
+	outline: 3px solid var(--watch-accent);
+	outline-offset: 3px;
+}
+.watch-shell button {
+	cursor: pointer;
+}
+.watch-shell button:disabled {
+	cursor: default;
+}
+@media (max-width: 767px) {
+	.watch-shell .watch-nav {
+		height: auto;
+		min-height: 68px;
+		padding: 14px 20px;
+		gap: 14px;
+		flex-wrap: wrap;
+	}
+	.watch-shell .watch-brand {
+		font-size: 22px;
+	}
+	.watch-shell .header-actions {
+		margin-left: auto;
+	}
+	.watch-shell .header-search {
+		order: 3;
+		max-width: none;
+		flex-basis: 100%;
+		margin: 0;
+	}
+	.watch-shell .watch-content {
+		padding: 24px 20px;
+	}
+}
+@media (max-width: 479px) {
+	.watch-shell .watch-nav {
+		padding: 12px 16px;
+		gap: 10px;
+	}
+	.watch-shell .watch-content {
+		padding: 22px 16px;
+	}
+	.watch-shell .manage-label {
+		display: none;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.watch-shell * {
+		scroll-behavior: auto !important;
+		transition: none !important;
+		animation: none !important;
+	}
+}

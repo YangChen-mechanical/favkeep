@@ -73,7 +73,9 @@ pub async fn get_videos(
         let having = match state {
             WatchState::Watched => "SUM(COALESCE(w.completed,0)) = COUNT(*)",
             WatchState::Unwatched => "SUM(CASE WHEN w.completed OR w.position_ms > 0 THEN 1 ELSE 0 END) = 0",
-            WatchState::InProgress => "SUM(CASE WHEN w.completed OR w.position_ms > 0 THEN 1 ELSE 0 END) > 0 AND SUM(COALESCE(w.completed,0)) < COUNT(*)",
+            WatchState::InProgress => {
+                "SUM(CASE WHEN w.completed OR w.position_ms > 0 THEN 1 ELSE 0 END) > 0 AND SUM(COALESCE(w.completed,0)) < COUNT(*)"
+            }
         };
         query = query.filter(Expr::cust(format!(
             "video.id IN (SELECT p.video_id FROM page p LEFT JOIN watch_progress w ON w.page_id=p.id
@@ -125,18 +127,22 @@ pub async fn get_videos(
         (0, 10)
     };
     query = match params.sort {
-        Some(WatchSort::Added) => query.order_by_desc(video::Column::CreatedAt).order_by_desc(video::Column::Id),
+        Some(WatchSort::Added) => query
+            .order_by_desc(video::Column::CreatedAt)
+            .order_by_desc(video::Column::Id),
         Some(WatchSort::Title) => query.order_by_asc(video::Column::Name).order_by_asc(video::Column::Id),
         None => query.order_by_desc(video::Column::Id),
     };
     let videos = query
-            .into_partial_model::<VideoInfo>()
-            .paginate(&db, page_size)
-            .fetch_page(page)
-            .await?;
+        .into_partial_model::<VideoInfo>()
+        .paginate(&db, page_size)
+        .fetch_page(page)
+        .await?;
     let watch_summaries = if params.saved_only == Some(true) {
         Some(watch::summaries(&db, &videos.iter().map(|v| v.id).collect::<Vec<_>>()).await?)
-    } else { None };
+    } else {
+        None
+    };
     Ok(ApiResponse::ok(VideosResponse {
         videos,
         total_count,
@@ -164,11 +170,17 @@ pub async fn get_video(
         video: video_info,
         watch_progress: watch_progress::Entity::find()
             .filter(watch_progress::Column::PageId.is_in(pages_info.iter().map(|p| p.id)))
-            .all(&db).await?,
-        playable_page_ids: page::Entity::find().filter(page::Column::VideoId.eq(id))
+            .all(&db)
+            .await?,
+        playable_page_ids: page::Entity::find()
+            .filter(page::Column::VideoId.eq(id))
             .filter(PageStatus::query_builder().subtask_succeeded(1))
             .filter(page::Column::Path.ends_with(".mp4"))
-            .all(&db).await?.iter().map(|p| p.id).collect(),
+            .all(&db)
+            .await?
+            .iter()
+            .map(|p| p.id)
+            .collect(),
         watch_summary: watch::summaries(&db, &[id]).await?.pop(),
         pages: pages_info,
     }))
@@ -299,7 +311,8 @@ pub async fn reset_filtered_video_status(
         query = query.filter(
             video::Column::Name
                 .contains(&query_word)
-                .or(video::Column::Bvid.contains(query_word)),
+                .or(video::Column::Bvid.contains(&query_word))
+                .or(video::Column::UpperName.contains(query_word)),
         );
     }
     if let Some(status_filter) = request.status_filter {
@@ -439,7 +452,8 @@ pub async fn update_filtered_video_status(
         query = query.filter(
             video::Column::Name
                 .contains(&query_word)
-                .or(video::Column::Bvid.contains(query_word)),
+                .or(video::Column::Bvid.contains(&query_word))
+                .or(video::Column::UpperName.contains(query_word)),
         );
     }
     if let Some(status_filter) = request.status_filter {
@@ -523,6 +537,7 @@ mod tests {
                 id,
                 name: format!("Video {id}"),
                 bvid: format!("BV{id}"),
+                upper_name: format!("Author{id}"),
                 // Saved files remain watchable even if the source is now invalid or skipped.
                 valid: false,
                 should_download: false,
@@ -581,5 +596,60 @@ mod tests {
         assert_eq!(existing["total_count"], 8);
         assert_eq!(existing, list(&db, "saved_only=false&page=0&page_size=20").await);
         assert_eq!(list(&db, "query=BV3").await["total_count"], 1);
+        assert!(existing.get("watch_summaries").is_none());
+        assert_eq!(list(&db, "saved_only=true&query=Author1").await["total_count"], 1);
+        assert_eq!(list(&db, "saved_only=true&sort=title").await["videos"][0]["id"], 1);
+        assert_eq!(first["watch_summaries"][0]["page_count"], 2);
+        assert_eq!(first["watch_summaries"][0]["duration"], 120);
+        assert_eq!(
+            list(&db, "saved_only=true&watch_state=unwatched").await["total_count"],
+            3
+        );
+        for (id, position, completed) in [(1, 60000, true), (2, 60000, true), (3, 12000, false)] {
+            watch_progress::ActiveModel {
+                page_id: Set(id),
+                position_ms: Set(position),
+                completed: Set(completed),
+                revision: Set(1),
+                updated_at: Set(chrono::Utc::now().naive_utc()),
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+        }
+        for (state, id) in [("unwatched", 8), ("in_progress", 2), ("watched", 1)] {
+            let found = list(&db, &format!("saved_only=true&watch_state={state}&page=0&page_size=1")).await;
+            assert_eq!(found["total_count"], 1);
+            assert_eq!(found["videos"][0]["id"], id);
+            assert_eq!(found["watch_summaries"][0]["watch_state"], state);
+        }
+        assert_eq!(
+            list(&db, "saved_only=true&watch_state=in_progress").await["watch_summaries"][0]["resume_position_ms"],
+            12000
+        );
+        watch_progress::ActiveModel {
+            page_id: Set(8),
+            position_ms: Set(60000),
+            completed: Set(true),
+            revision: Set(1),
+            updated_at: Set(chrono::Utc::now().naive_utc()),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        let partial = list(&db, "saved_only=true&watch_state=in_progress&page=0&page_size=1").await;
+        assert_eq!(partial["total_count"], 2);
+        assert_eq!(partial["watch_summaries"][0]["resume_page_id"], 9);
+        watch_progress::ActiveModel {
+            page_id: Set(9),
+            position_ms: Set(60000),
+            completed: Set(true),
+            revision: Set(1),
+            updated_at: Set(chrono::Utc::now().naive_utc()),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        assert_eq!(list(&db, "saved_only=true&watch_state=watched").await["total_count"], 2);
     }
 }
