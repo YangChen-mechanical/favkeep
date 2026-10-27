@@ -38,6 +38,7 @@ pub enum WatchSort {
 
 #[derive(Deserialize)]
 pub struct VideosRequest {
+    pub platform: Option<String>,
     pub saved_only: Option<bool>,
     pub watch_state: Option<WatchState>,
     pub sort: Option<WatchSort>,
@@ -175,6 +176,22 @@ pub struct DefaultPathRequest {
 #[derive(Debug, Deserialize)]
 pub struct PollQrcodeRequest {
     pub qrcode_key: String,
+    #[serde(default)]
+    pub platform: LoginPlatform,
+}
+
+#[derive(Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LoginPlatform {
+    #[default]
+    Bilibili,
+    Douyin,
+}
+
+#[derive(Default, Deserialize)]
+pub struct GenerateQrcodeRequest {
+    #[serde(default)]
+    pub platform: LoginPlatform,
 }
 
 #[derive(Debug, Deserialize)]

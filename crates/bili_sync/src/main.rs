@@ -8,6 +8,7 @@ mod bilibili;
 mod config;
 mod database;
 mod downloader;
+mod douyin;
 mod error;
 mod notifier;
 mod task;
@@ -40,6 +41,9 @@ async fn main() {
         Ok(res) => res,
         Err(e) => {
             error!("初始化失败：{:#}", e);
+            if ARGS.douyin_import_session.is_some() {
+                std::process::exit(1);
+            }
             return;
         }
     };
@@ -117,6 +121,15 @@ async fn init() -> Result<(Arc<BiliClient>, DatabaseConnection, LogHelper)> {
     info!("数据库初始化完成");
     VersionedConfig::init(&connection).await.context("配置初始化失败")?;
     info!("配置初始化完成");
+
+    if let Some(path) = &ARGS.douyin_import_session {
+        douyin::login::import_session(&connection, path)
+            .await
+            .context("抖音会话导入失败")?;
+        info!("同账号抖音会话已验证并导入，可启动服务后在网页验证并恢复任务");
+        connection.close().await?;
+        std::process::exit(0);
+    }
 
     Ok((Arc::new(BiliClient::new()), connection, log_writer))
 }

@@ -44,6 +44,7 @@ struct TaskContext {
     status_tx: watch::Sender<TaskStatus>,
     status_rx: watch::Receiver<TaskStatus>,
     video_task_id: tokio::sync::Mutex<Option<uuid::Uuid>>, // 存储当前视频下载任务的 UUID
+    douyin_task_id: tokio::sync::Mutex<Option<uuid::Uuid>>,
 }
 
 impl DownloadTaskManager {
@@ -81,6 +82,69 @@ impl DownloadTaskManager {
         Ok(())
     }
 
+    pub async fn douyin_once(&self) -> Result<()> {
+        self.sched
+            .lock()
+            .await
+            .add(Job::new_one_shot_async(
+                Duration::ZERO,
+                Self::douyin_task(self.cx.clone()),
+            )?)
+            .await?;
+        Ok(())
+    }
+
+    fn douyin_task(
+        cx: Arc<TaskContext>,
+    ) -> impl FnMut(uuid::Uuid, JobScheduler) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        move |_, mut scheduler| {
+            let cx = cx.clone();
+            Box::pin(async move {
+                let config = VersionedConfig::get().snapshot();
+                if let Err(error) = crate::douyin::runtime::run(&cx.connection, &config).await {
+                    warn!("抖音本轮已停止：{}", error);
+                }
+                if let Some(id) = *cx.douyin_task_id.lock().await {
+                    let next = scheduler
+                        .next_tick_for_job(id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|v| v.timestamp())
+                        .unwrap_or(0);
+                    crate::douyin::runtime::NEXT_RUN.store(next, std::sync::atomic::Ordering::Relaxed);
+                }
+            })
+        }
+    }
+
+    async fn schedule_douyin(
+        sched: &tokio::sync::Mutex<JobScheduler>,
+        cx: Arc<TaskContext>,
+        seconds: u64,
+    ) -> Result<()> {
+        let mut scheduler = sched.lock().await;
+        let mut current = cx.douyin_task_id.lock().await;
+        if let Some(id) = *current {
+            scheduler.remove(&id).await?;
+            *current = None;
+        }
+        let id = scheduler
+            .add(Job::new_repeated_async(
+                Duration::from_secs(seconds),
+                Self::douyin_task(cx.clone()),
+            )?)
+            .await?;
+        *current = Some(id);
+        let next = scheduler
+            .next_tick_for_job(id)
+            .await?
+            .map(|v| v.timestamp())
+            .unwrap_or(0);
+        crate::douyin::runtime::NEXT_RUN.store(next, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
     /// 启动任务调度器
     async fn start(&self) -> Result<()> {
         self.sched.lock().await.start().await?;
@@ -105,6 +169,7 @@ impl DownloadTaskManager {
             status_tx,
             status_rx,
             video_task_id,
+            douyin_task_id: tokio::sync::Mutex::new(None),
         });
         // 读取初始配置
         let mut rx = VersionedConfig::get().subscribe();
@@ -146,6 +211,9 @@ impl DownloadTaskManager {
             }
         };
         *cx.video_task_id.lock().await = video_task_id;
+        if let Err(error) = Self::schedule_douyin(&sched, cx.clone(), initial_config.douyin.interval).await {
+            warn!("抖音调度初始化失败：{}", error);
+        }
         // 发起一个一次性的任务，更新一下下次运行的时间
         if let Some(video_task_id) = video_task_id {
             sched
@@ -163,9 +231,21 @@ impl DownloadTaskManager {
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(Ok(()));
         tokio::spawn(async move {
             let update_task_result = async {
+                let mut previous = initial_config.clone();
                 while rx.changed().await.is_ok() {
                     let new_config = rx.borrow().clone();
                     let cx = cx_clone.clone();
+                    if previous.douyin.interval != new_config.douyin.interval
+                        && let Err(error) =
+                            Self::schedule_douyin(&sched_clone, cx.clone(), new_config.douyin.interval).await
+                    {
+                        warn!("抖音调度更新失败：{}", error);
+                    }
+                    let bili_interval_changed = previous.interval != new_config.interval;
+                    previous = new_config.clone();
+                    if !bili_interval_changed {
+                        continue;
+                    }
                     let mut video_task_id = cx.video_task_id.lock().await;
                     if let Some(old_video_task_id) = *video_task_id {
                         // 这里必须成功，不然后面会重复添加任务

@@ -17,6 +17,7 @@ mod m20260823_000001_add_danmaku_last_synced_at;
 mod m20261022_000001_add_watch_progress;
 
 mod m20261023_000001_add_app_auth;
+mod m20261026_000001_add_douyin;
 
 pub struct Migrator;
 
@@ -40,6 +41,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260823_000001_add_danmaku_last_synced_at::Migration),
             Box::new(m20261022_000001_add_watch_progress::Migration),
             Box::new(m20261023_000001_add_app_auth::Migration),
+            Box::new(m20261026_000001_add_douyin::Migration),
         ]
     }
 }

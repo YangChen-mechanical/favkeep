@@ -9,6 +9,9 @@ import type {
 	ContinueWatchingItem,
 	Credential,
 	DashBoardResponse,
+	DouyinFolder,
+	DouyinFoldersResponse,
+	DouyinStatus,
 	FavoritesResponse,
 	FullSyncVideoSourceRequest,
 	FullSyncVideoSourceResponse,
@@ -18,6 +21,7 @@ import type {
 	InsertSubmissionRequest,
 	Notifier,
 	NotifiersResponse,
+	Platform,
 	QrcodePollResponse as PollQrcodeResponse,
 	ResetFilteredVideosResponse,
 	ResetFilteredVideoStatusRequest,
@@ -341,12 +345,45 @@ class ApiClient {
 		return this.post<boolean>('/task/download');
 	}
 
-	async generateQrcode(): Promise<ApiResponse<GenerateQrcodeResponse>> {
-		return this.post<GenerateQrcodeResponse>('/login/qrcode/generate');
+	async getDouyinStatus(): Promise<ApiResponse<DouyinStatus>> {
+		return this.get('/douyin/status');
 	}
 
-	async pollQrcode(qrcodeKey: string): Promise<ApiResponse<PollQrcodeResponse>> {
-		return this.post<PollQrcodeResponse>('/login/qrcode/poll', { qrcode_key: qrcodeKey });
+	async updateDouyinConfig(interval: number): Promise<ApiResponse<DouyinStatus>> {
+		return this.put('/config/douyin', { interval });
+	}
+
+	async getDouyinFolders(): Promise<ApiResponse<DouyinFoldersResponse>> {
+		return this.get('/video-sources/douyin');
+	}
+
+	async refreshDouyinFolders(): Promise<ApiResponse<DouyinFoldersResponse>> {
+		return this.post('/video-sources/douyin/refresh');
+	}
+
+	async updateDouyinFolder(id: string, enabled: boolean): Promise<ApiResponse<DouyinFolder>> {
+		return this.put(`/video-sources/douyin/${encodeURIComponent(id)}`, { enabled });
+	}
+
+	async triggerDouyinTask(): Promise<ApiResponse<boolean>> {
+		return this.post('/task/douyin');
+	}
+
+	async resumeDouyin(): Promise<ApiResponse<unknown>> {
+		return this.post('/douyin/resume');
+	}
+
+	async generateQrcode(
+		platform: Platform = 'bilibili'
+	): Promise<ApiResponse<GenerateQrcodeResponse>> {
+		return this.post<GenerateQrcodeResponse>(`/login/qrcode/generate?platform=${platform}`);
+	}
+
+	async pollQrcode(
+		qrcodeKey: string,
+		platform: Platform = 'bilibili'
+	): Promise<ApiResponse<PollQrcodeResponse>> {
+		return this.post<PollQrcodeResponse>('/login/qrcode/poll', { qrcode_key: qrcodeKey, platform });
 	}
 
 	subscribeToLogs(onMessage: (data: string) => void) {
@@ -409,8 +446,16 @@ const api = {
 	updateConfig: (config: Config) => apiClient.updateConfig(config),
 	getDashboard: () => apiClient.getDashboard(),
 	triggerDownloadTask: () => apiClient.triggerDownloadTask(),
-	generateQrcode: () => apiClient.generateQrcode(),
-	pollQrcode: (qrcodeKey: string) => apiClient.pollQrcode(qrcodeKey),
+	getDouyinStatus: () => apiClient.getDouyinStatus(),
+	updateDouyinConfig: (interval: number) => apiClient.updateDouyinConfig(interval),
+	getDouyinFolders: () => apiClient.getDouyinFolders(),
+	refreshDouyinFolders: () => apiClient.refreshDouyinFolders(),
+	updateDouyinFolder: (id: string, enabled: boolean) => apiClient.updateDouyinFolder(id, enabled),
+	triggerDouyinTask: () => apiClient.triggerDouyinTask(),
+	resumeDouyin: () => apiClient.resumeDouyin(),
+	generateQrcode: (platform: Platform = 'bilibili') => apiClient.generateQrcode(platform),
+	pollQrcode: (qrcodeKey: string, platform: Platform = 'bilibili') =>
+		apiClient.pollQrcode(qrcodeKey, platform),
 	subscribeToSysInfo: (onMessage: (data: SysInfo) => void) =>
 		apiClient.subscribeToSysInfo(onMessage),
 

@@ -4,7 +4,6 @@ use sea_orm::prelude::DateTime;
 use sea_orm::{DerivePartialModel, FromQueryResult};
 use serde::Serialize;
 
-use crate::bilibili::Qrcode;
 use crate::utils::status::{PageStatus, VideoStatus};
 
 #[derive(Serialize)]
@@ -86,7 +85,9 @@ pub struct VideoSource {
 #[sea_orm(entity = "video::Entity")]
 pub struct VideoInfo {
     pub id: i32,
-    pub bvid: String,
+    pub platform: String,
+    pub platform_id: Option<String>,
+    pub bvid: Option<String>,
     pub name: String,
     pub upper_name: String,
     pub valid: bool,
@@ -245,7 +246,17 @@ pub struct UpdateVideoSourceResponse {
     pub rule_display: Option<String>,
 }
 
-pub type GenerateQrcodeResponse = Qrcode;
+#[derive(Clone, Serialize)]
+pub struct GenerateQrcodeResponse {
+    pub url: String,
+    pub qrcode_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<&'static str>,
+}
 
 #[derive(Serialize)]
 pub struct FullSyncVideoSourceResponse {

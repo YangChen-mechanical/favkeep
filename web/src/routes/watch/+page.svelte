@@ -11,7 +11,7 @@
 	import WatchCard from '$lib/components/watch-card.svelte';
 	import Pagination from '$lib/components/pagination.svelte';
 	import api from '$lib/api';
-	import type { ApiError, VideosResponse, WatchState } from '$lib/types';
+	import type { ApiError, VideosResponse, WatchState, Platform } from '$lib/types';
 
 	const filters: { value: WatchState | ''; label: string }[] = [
 		{ value: '', label: '全部' },
@@ -27,6 +27,13 @@
 	let restoring = true;
 	let state: WatchState | '';
 	let sort: 'added' | 'title';
+	let platform: Platform | '';
+	$: platform =
+		$page.url.searchParams.get('platform') === 'douyin'
+			? 'douyin'
+			: $page.url.searchParams.get('platform') === 'bilibili'
+				? 'bilibili'
+				: '';
 	$: query = $page.url.searchParams.get('q') || '';
 	$: state = filters.find((f) => f.value === $page.url.searchParams.get('state'))?.value || '';
 	$: sort = $page.url.searchParams.get('sort') === 'title' ? 'title' : 'added';
@@ -48,6 +55,7 @@
 		try {
 			const { data } = await api.getVideos({
 				saved_only: true,
+				platform: platform || undefined,
 				page: currentPage,
 				page_size: 20,
 				query,
@@ -106,6 +114,14 @@
 					>{/each}
 			</div>
 			<div class="sort-control">
+				<label class="sr-only" for="watch-platform">平台</label><select
+					id="watch-platform"
+					value={platform}
+					onchange={(event) => update('platform', event.currentTarget.value)}
+					><option value="">全部平台</option><option value="bilibili">B站</option><option
+						value="douyin">抖音</option
+					></select
+				>
 				<SlidersIcon size={14} /><label class="sr-only" for="watch-sort">排序</label><select
 					id="watch-sort"
 					value={sort}
@@ -144,16 +160,14 @@
 			/>
 		{:else}<div class="watch-empty">
 				<div class="empty-icon"><SearchIcon size={28} /></div>
-				<h2>{query || state ? '没有找到匹配的视频' : '媒体库还空着'}</h2>
+				<h2>{query || state || platform ? '没有找到匹配的视频' : '媒体库还空着'}</h2>
 				<p>
-					{query || state
-						? '试试其他关键词，或清除观看状态筛选。'
+					{query || state || platform
+						? '试试其他关键词，或清除观看状态与平台筛选。'
 						: '视频保存完成后，会带着封面出现在这里。'}
 				</p>
-				{#if query || state}<Button variant="outline" href="/watch">清除筛选</Button>{:else}<Button
-						variant="outline"
-						href="/video-sources">管理收藏来源</Button
-					>{/if}
+				{#if query || state || platform}<Button variant="outline" href="/watch">清除筛选</Button
+					>{:else}<Button variant="outline" href="/video-sources">管理收藏来源</Button>{/if}
 			</div>{/if}
 	</section>
 </div>

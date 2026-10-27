@@ -27,6 +27,7 @@ axum = { version = "0.8.9", features = ["macros", "ws"] }
 base64 = "0.22.1"
 built = { version = "0.8.1", features = ["git2", "chrono"] }
 chrono = { version = "0.4.45", features = ["serde"] }
+chromiumoxide = { version = "=0.9.1", default-features = false }
 clap = { version = "4.6.1", features = ["env", "string"] }
 cookie = "0.18.1"
 croner = "3.0.1"
@@ -82,6 +83,7 @@ sea-orm-migration = { version = "1.1.20", features = [] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 serde_urlencoded = "0.7.1"
+sm3 = "0.4.2"
 strum = { version = "0.28.0", features = ["derive"] }
 sysinfo = "0.39.6"
 thiserror = "2.0.18"

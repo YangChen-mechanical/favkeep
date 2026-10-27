@@ -4,6 +4,7 @@ export interface ApiResponse<T> {
 }
 
 export interface VideosRequest {
+	platform?: Platform;
 	saved_only?: boolean;
 	watch_state?: WatchState;
 	sort?: 'added' | 'title';
@@ -32,9 +33,13 @@ export interface VideoSourcesResponse {
 	watch_later: VideoSource[];
 }
 
+export type Platform = 'bilibili' | 'douyin';
+
 export interface VideoInfo {
 	id: number;
-	bvid: string;
+	platform: Platform;
+	platform_id: string | null;
+	bvid: string | null;
 	name: string;
 	upper_name: string;
 	valid: boolean;
@@ -158,6 +163,7 @@ export interface UpdateVideoStatusRequest {
 }
 
 export interface UpdateFilteredVideoStatusRequest {
+	platform?: Platform;
 	collection?: number;
 	favorite?: number;
 	submission?: number;
@@ -176,6 +182,7 @@ export interface ResetVideoStatusRequest {
 }
 
 export interface ResetFilteredVideoStatusRequest {
+	platform?: Platform;
 	collection?: number;
 	favorite?: number;
 	submission?: number;
@@ -453,23 +460,62 @@ export interface UpdateVideoSourceResponse {
 	ruleDisplay: string;
 }
 
+export interface DouyinStatus {
+	connected: boolean;
+	account_name: string | null;
+	auth_state: 'disconnected' | 'connected' | 'paused';
+	interval: number;
+	paused_reason: string | null;
+	rejections: number;
+	task: {
+		is_running: boolean;
+		last_run: string | null;
+		last_finish: string | null;
+		next_run: string | null;
+		last_error: string | null;
+	};
+}
+
+export interface DouyinFolder {
+	id: string;
+	name: string;
+	enabled: boolean;
+	available: boolean;
+	baseline_at: string | null;
+	last_sync_at: string | null;
+	last_error: string | null;
+	video_count: number;
+}
+
+export interface DouyinFoldersResponse {
+	folders: DouyinFolder[];
+}
+
 // 扫码登录相关类型
 export interface QrcodeGenerateResponse {
-	url: string;
+	url?: string;
+	image?: string;
 	qrcode_key: string;
+	message?: string;
 }
 
 export type QrcodePollResponse =
 	| {
 			status: 'success';
-			version: number;
+			version?: number;
 	  }
 	| {
 			status: 'pending';
 			message: string;
 			scanned?: boolean;
+			image?: string;
+			url?: string;
 	  }
 	| {
 			status: 'expired';
+			message: string;
+	  }
+	| {
+			status: 'failed' | 'verification_required' | 'account_changed';
 			message: string;
 	  };

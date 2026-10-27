@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { douyinMessage } from '$lib/platform';
 	import { onMount, tick } from 'svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
@@ -18,7 +19,15 @@
 	import api from '$lib/api';
 	import { toast } from 'svelte-sonner';
 	import { setBreadcrumb } from '$lib/stores/breadcrumb';
-	import type { Config, ApiError, Notifier, Credential, DanmakuUpdateMilestone } from '$lib/types';
+	import type {
+		Config,
+		ApiError,
+		Notifier,
+		Credential,
+		DanmakuUpdateMilestone,
+		DouyinStatus,
+		Platform
+	} from '$lib/types';
 
 	let credential: Credential = {
 		sessdata: '',
@@ -50,6 +59,46 @@
 	// QR 登录 Dialog 相关
 	let showQrLoginDialog = false;
 	let qrLoginComponent: QrLogin;
+	let qrPlatform: Platform = 'bilibili';
+	let douyin: DouyinStatus | null = null;
+	let douyinError = '';
+	let douyinInterval = 1800;
+	let douyinSaving = false;
+
+	async function loadDouyin() {
+		douyinError = '';
+		try {
+			douyin = (await api.getDouyinStatus()).data;
+			douyinInterval = douyin.interval;
+		} catch (error) {
+			douyinError = (error as ApiError).message;
+		}
+	}
+
+	async function saveDouyinInterval() {
+		if (!Number.isSafeInteger(douyinInterval) || douyinInterval <= 0) {
+			toast.error('抖音同步间隔须为正整数秒');
+			return;
+		}
+		douyinSaving = true;
+		try {
+			douyin = (await api.updateDouyinConfig(douyinInterval)).data;
+			const current = (await api.getConfig()).data;
+			if (formData && current.version === formData.version + 1) formData.version = current.version;
+			toast.success('抖音同步间隔已保存');
+		} catch (error) {
+			toast.error('保存抖音同步间隔失败', { description: (error as ApiError).message });
+		} finally {
+			douyinSaving = false;
+		}
+	}
+
+	async function openQrLogin(platform: Platform) {
+		qrPlatform = platform;
+		showQrLoginDialog = true;
+		await tick();
+		qrLoginComponent.init();
+	}
 
 	function openAddNotifierDialog() {
 		editingNotifier = null;
@@ -260,6 +309,18 @@
 
 	async function handleQrLoginSuccess() {
 		showQrLoginDialog = false;
+		if (qrPlatform === 'douyin') {
+			await loadDouyin();
+			toast.success('抖音已连接，正在刷新收藏夹');
+			try {
+				await api.refreshDouyinFolders();
+			} catch (error) {
+				toast.error('收藏夹刷新失败，请到视频源页面重试', {
+					description: (error as ApiError).message
+				});
+			}
+			return;
+		}
 		const response = await api.getConfig();
 		if (formData && response.data.version === formData.version + 1) {
 			formData.version = response.data.version;
@@ -274,6 +335,7 @@
 	onMount(() => {
 		setBreadcrumb([{ label: '设置' }]);
 		loadConfig();
+		void loadDouyin();
 	});
 </script>
 
@@ -337,7 +399,7 @@
 			<Tabs.Root value="basic" class="w-full">
 				<Tabs.List class="grid w-full grid-cols-6">
 					<Tabs.Trigger value="basic">基本设置</Tabs.Trigger>
-					<Tabs.Trigger value="auth">B站认证</Tabs.Trigger>
+					<Tabs.Trigger value="auth">平台连接</Tabs.Trigger>
 					<Tabs.Trigger value="filter">视频处理</Tabs.Trigger>
 					<Tabs.Trigger value="danmaku">弹幕渲染</Tabs.Trigger>
 					<Tabs.Trigger value="notifiers">通知设置</Tabs.Trigger>
@@ -451,6 +513,63 @@
 
 				<!-- B站认证 -->
 				<Tabs.Content value="auth" class="mt-6 space-y-6">
+					<section class="space-y-4 rounded-lg border p-4" aria-label="抖音连接">
+						<div class="flex flex-wrap items-center justify-between gap-3">
+							<div>
+								<h2 class="font-semibold">抖音连接</h2>
+								<p class="text-muted-foreground mt-1 text-sm">
+									单账号连接；登录信息仅保存在服务器。
+								</p>
+							</div>
+							<Button onclick={() => openQrLogin('douyin')}
+								><QrCodeIcon class="mr-2 h-4 w-4" />{douyin?.connected
+									? '重新登录'
+									: '连接抖音'}</Button
+							>
+						</div>
+						{#if douyin}
+							<div class="flex flex-wrap items-center gap-2 text-sm">
+								<Badge variant={douyin.auth_state === 'connected' ? 'default' : 'secondary'}
+									>{douyin.auth_state === 'connected'
+										? '已连接'
+										: douyin.auth_state === 'paused'
+											? '已暂停'
+											: '未连接'}</Badge
+								>
+								{#if douyin.account_name}<span>{douyin.account_name}</span>{/if}
+							</div>
+							{#if douyin.paused_reason}<p class="text-destructive text-sm" role="status">
+									{douyinMessage(douyin.paused_reason)}。处理后请到仪表盘验证连接并恢复任务。
+								</p>{/if}
+						{:else if douyinError}
+							<p class="text-destructive text-sm" role="alert">连接状态加载失败：{douyinError}</p>
+							<Button variant="outline" size="sm" onclick={loadDouyin}>重试</Button>
+						{:else}<p class="text-muted-foreground text-sm">正在加载连接状态…</p>{/if}
+						<div class="flex flex-wrap items-end gap-3">
+							<div class="space-y-2">
+								<Label for="douyin-interval">抖音同步间隔（秒）</Label><Input
+									id="douyin-interval"
+									type="number"
+									min="1"
+									step="1"
+									bind:value={douyinInterval}
+									class="w-44"
+								/>
+							</div>
+							<Button
+								variant="outline"
+								onclick={saveDouyinInterval}
+								disabled={!douyin || douyinSaving}
+								>{douyinSaving ? '保存中…' : '保存抖音间隔'}</Button
+							>
+						</div>
+						<p class="text-muted-foreground text-xs">
+							默认 1800 秒，独立于 B 站任务。连接后在<a class="underline" href="/video-sources"
+								>视频源</a
+							>勾选需要保存的收藏夹。
+						</p>
+					</section>
+					<h2 class="font-semibold">B站连接</h2>
 					<p class="text-muted-foreground text-sm">
 						{formData.credential_configured
 							? 'B 站凭据已配置。为保护账号，此处不回显；普通设置保存会保留原凭据。'
@@ -463,14 +582,7 @@
 								使用哔哩哔哩 APP 扫码登录，凭据仅保存在服务器
 							</p>
 						</div>
-						<Button
-							onclick={() => {
-								showQrLoginDialog = true;
-								tick().then(() => {
-									qrLoginComponent!.init();
-								});
-							}}
-						>
+						<Button onclick={() => openQrLogin('bilibili')}>
 							<QrCodeIcon class="mr-2 h-4 w-4" />
 							扫码登录
 						</Button>
@@ -1028,10 +1140,16 @@
 		>
 			<Dialog.Header>
 				<Dialog.Title>扫码登录</Dialog.Title>
-				<Dialog.Description>使用哔哩哔哩 APP 扫描二维码登录</Dialog.Description>
+				<Dialog.Description
+					>使用{qrPlatform === 'douyin' ? '抖音' : '哔哩哔哩'} APP 扫描二维码登录</Dialog.Description
+				>
 			</Dialog.Header>
 
-			<QrLogin bind:this={qrLoginComponent} onSuccess={handleQrLoginSuccess} />
+			<QrLogin
+				bind:this={qrLoginComponent}
+				platform={qrPlatform}
+				onSuccess={handleQrLoginSuccess}
+			/>
 		</Dialog.Content>
 	</Dialog.Portal>
 </Dialog.Root>

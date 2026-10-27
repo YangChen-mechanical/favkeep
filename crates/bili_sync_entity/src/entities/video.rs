@@ -6,23 +6,27 @@ use sea_orm::entity::prelude::*;
 use crate::string_vec::StringVec;
 use crate::upper_vec::{Upper, UpperVec};
 
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, derivative::Derivative)]
+#[derivative(Default)]
 #[sea_orm(table_name = "video")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
+    #[derivative(Default(value = "\"bilibili\".into()"))]
+    pub platform: String,
+    pub platform_id: Option<String>,
     pub collection_id: Option<i32>,
     pub favorite_id: Option<i32>,
     pub watch_later_id: Option<i32>,
     pub submission_id: Option<i32>,
-    pub upper_id: i64,
+    pub upper_id: Option<i64>,
     pub upper_name: String,
     pub upper_face: String,
     pub staff: Option<UpperVec>,
     pub name: String,
     pub path: String,
     pub category: i32,
-    pub bvid: String,
+    pub bvid: Option<String>,
     pub intro: String,
     pub cover: String,
     pub ctime: DateTime,
@@ -41,8 +45,8 @@ impl Model {
         if let Some(staff) = self.staff.as_ref() {
             Either::Left(staff.0.iter().map(|u| u.as_ref()))
         } else {
-            Either::Right(std::iter::once(Upper::<i64, &str> {
-                mid: self.upper_id,
+            Either::Right(self.upper_id.into_iter().map(|mid| Upper::<i64, &str> {
+                mid,
                 name: self.upper_name.as_str(),
                 face: self.upper_face.as_str(),
                 title: None,

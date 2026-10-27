@@ -4,7 +4,7 @@
 	import * as Card from '$lib/components/ui/card';
 	import { toast } from 'svelte-sonner';
 	import api from '$lib/api';
-	import type { ApiError } from '$lib/types';
+	import type { ApiError, Platform } from '$lib/types';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import QRCode from 'qrcode';
@@ -27,6 +27,7 @@
 	const QR_MARGIN = 2; // 二维码边距
 
 	export let onSuccess: () => void;
+	export let platform: Platform = 'bilibili';
 
 	export function init() {
 		generateQrcode();
@@ -35,7 +36,6 @@
 	type Status = 'loading' | 'showing' | 'expired' | 'error';
 
 	let status: Status = 'loading';
-	let qrcodeUrl = ''; // B站返回的二维码 URL（需要转换为图片）
 	let qrcodeKey = ''; // 用于轮询的认证 token
 	let qrcodeDataUrl = ''; // 生成的二维码图片 Data URL
 	let countdown = QR_EXPIRE_TIME; // 倒计时
@@ -44,6 +44,26 @@
 	let scanned = false; // 是否已扫描
 	let errorMessage = '';
 	let isPolling = false; // 轮询标志，确保轮询排他性
+	let pollInFlight = false;
+	let generation = 0;
+	let pendingMessage = '';
+
+	async function displayQrcode(data: { image?: string; url?: string }, request: number) {
+		if (!data.image && !data.url) return;
+		const image =
+			data.image ||
+			(await QRCode.toDataURL(data.url!, {
+				width: QR_SIZE,
+				margin: QR_MARGIN,
+				color: { dark: '#000000', light: '#FFFFFF' }
+			}));
+		if (request !== generation) return;
+		qrcodeDataUrl = image;
+		if (status === 'loading') {
+			status = 'showing';
+			startCountdown();
+		}
+	}
 
 	/**
 	 * 生成二维码
@@ -54,35 +74,29 @@
 	 * 4. 开始轮询登录状态
 	 */
 	async function generateQrcode() {
+		const request = ++generation;
 		// 先停止之前的轮询和倒计时（排他性）
 		stopPolling();
 		stopCountdown();
 		status = 'loading';
 		errorMessage = '';
 		scanned = false;
+		qrcodeDataUrl = '';
+		pendingMessage = '';
 
 		try {
-			const response = await api.generateQrcode();
-			qrcodeUrl = response.data.url;
+			const response = await api.generateQrcode(platform);
+			if (request !== generation) return;
 			qrcodeKey = response.data.qrcode_key;
+			pendingMessage = response.data.message || '';
 			countdown = QR_EXPIRE_TIME;
-
-			// 将 URL 转换为二维码图片
-			qrcodeDataUrl = await QRCode.toDataURL(qrcodeUrl, {
-				width: QR_SIZE,
-				margin: QR_MARGIN,
-				color: {
-					dark: '#000000',
-					light: '#FFFFFF'
-				}
-			});
-
-			status = 'showing';
+			await displayQrcode(response.data, request);
+			if (request !== generation) return;
 
 			// 开始轮询和倒计时
 			startPolling();
-			startCountdown();
 		} catch (error) {
+			if (request !== generation) return;
 			console.error('生成二维码失败:', error);
 			status = 'error';
 			errorMessage = (error as ApiError).message || '生成二维码失败';
@@ -100,14 +114,16 @@
 	 */
 	async function pollStatus() {
 		// 如果已经停止轮询，直接返回
-		if (!qrcodeKey || !isPolling) return;
+		if (!qrcodeKey || !isPolling || pollInFlight) return;
+		const request = generation;
+		pollInFlight = true;
 
 		try {
-			const response = await api.pollQrcode(qrcodeKey);
+			const response = await api.pollQrcode(qrcodeKey, platform);
 			const pollResult = response.data;
 
 			// 再次检查是否还在轮询（防止在请求过程中状态改变）
-			if (!isPolling) return;
+			if (!isPolling || request !== generation) return;
 
 			if (pollResult.status === 'success') {
 				stopPolling();
@@ -115,13 +131,26 @@
 				onSuccess();
 			} else if (pollResult.status === 'pending') {
 				scanned = pollResult.scanned || false;
+				pendingMessage = pollResult.message;
+				await displayQrcode(pollResult, request);
 			} else if (pollResult.status === 'expired') {
 				stopPolling();
 				stopCountdown();
 				status = 'expired';
+			} else {
+				stopPolling();
+				stopCountdown();
+				status = 'error';
+				errorMessage = pollResult.message || '登录未完成，请重试';
 			}
 		} catch (error) {
-			console.error('轮询登录状态失败:', error);
+			if (request !== generation) return;
+			stopPolling();
+			stopCountdown();
+			status = 'error';
+			errorMessage = (error as ApiError).message || '登录状态查询失败，请刷新二维码重试';
+		} finally {
+			pollInFlight = false;
 		}
 	}
 
@@ -133,6 +162,7 @@
 	function startPolling() {
 		isPolling = true;
 		pollInterval = setInterval(pollStatus, POLL_INTERVAL);
+		void pollStatus();
 	}
 
 	/**
@@ -177,6 +207,7 @@
 	}
 
 	onDestroy(() => {
+		generation++;
 		stopPolling();
 		stopCountdown();
 	});
@@ -207,7 +238,7 @@
 				<!-- 状态提示文本 -->
 				<div class="text-muted-foreground space-y-2 text-center text-sm">
 					{#if status === 'loading'}
-						<p>正在生成二维码...</p>
+						<p>{pendingMessage || '正在准备登录，请稍候...'}</p>
 					{:else if status === 'showing'}
 						{#if scanned}
 							<div class="flex items-center justify-center gap-2">
@@ -215,7 +246,7 @@
 								<p>已扫描，请在手机上确认登录</p>
 							</div>
 						{:else}
-							<p>请使用哔哩哔哩 APP 扫描二维码</p>
+							<p>请使用{platform === 'douyin' ? '抖音' : '哔哩哔哩'} APP 扫描二维码</p>
 						{/if}
 					{:else if status === 'expired'}
 						<p>二维码已过期</p>
@@ -247,9 +278,15 @@
 						加载中...
 					</Button>
 				{:else if status === 'showing'}
-					<Button variant="outline" size="sm" onclick={generateQrcode} class="w-full">
+					<Button
+						variant="outline"
+						size="sm"
+						onclick={generateQrcode}
+						class="w-full"
+						disabled={platform === 'douyin'}
+					>
 						<RefreshCw class="mr-2 h-4 w-4" />
-						刷新二维码
+						{platform === 'douyin' ? '二维码有效中' : '刷新二维码'}
 					</Button>
 				{:else}
 					<Button variant="outline" size="sm" onclick={generateQrcode} class="w-full">

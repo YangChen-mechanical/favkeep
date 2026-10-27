@@ -147,13 +147,16 @@ pub async fn fetch_video_details(
     let videos_model = filter_unfilled_videos(video_source.filter_expr(), connection).await?;
     let mut tasks = stream::iter(videos_model)
         .map(|video_model| async move {
-            let video = Video::new(bili_client, video_model.bvid.as_str(), &config.credential);
+            let bvid = video_model.bvid.as_deref()?;
+            let video = Video::new(bili_client, bvid, &config.credential);
             let info: Result<_> = async { Ok((video.get_tags().await?, video.get_view_info().await?)) }.await;
             match info {
                 Err(e) => {
                     error!(
                         "获取视频 {} - {} 的详细信息失败，错误为：{:#}",
-                        &video_model.bvid, &video_model.name, e
+                        video_model.bvid.as_deref().unwrap_or_default(),
+                        &video_model.name,
+                        e
                     );
                     if let Some(BiliError::ErrorResponse { code: -404, .. }) = e.downcast_ref::<BiliError>() {
                         Some(VideoDetailUpdate::Invalid(video_model.id))
@@ -247,10 +250,14 @@ pub async fn download_unprocessed_videos(
                 // 此处在下载前发现 None 的 tag 尝试重新填充以修复错误
                 if video_model.tags.is_none() {
                     video_model.tags = Some(
-                        Video::new(cx.bili_client, video_model.bvid.as_str(), &cx.config.credential)
-                            .get_tags()
-                            .await?
-                            .into(),
+                        Video::new(
+                            cx.bili_client,
+                            video_model.bvid.as_deref().context("B站视频缺少BV号")?,
+                            &cx.config.credential,
+                        )
+                        .get_tags()
+                        .await?
+                        .into(),
                     );
                 }
                 download_video_pages(video_model, pages_model, task_uids, cx).await
@@ -626,7 +633,7 @@ pub async fn download_page(
         _ => None,
     };
     let page_info = PageInfo {
-        cid: page_model.cid,
+        cid: page_model.cid.context("B站分页缺少CID")?,
         duration: page_model.duration,
         dimension,
         ..Default::default()
@@ -753,7 +760,11 @@ pub async fn fetch_page_video(
     if !should_run {
         return Ok(ExecutionStatus::Skipped);
     }
-    let bili_video = Video::new(cx.bili_client, video_model.bvid.as_str(), &cx.config.credential);
+    let bili_video = Video::new(
+        cx.bili_client,
+        video_model.bvid.as_deref().context("B站视频缺少BV号")?,
+        &cx.config.credential,
+    );
     let streams = bili_video
         .get_page_analyzer(page_info)
         .await?
@@ -807,7 +818,11 @@ pub async fn fetch_page_danmaku(
     if !should_run {
         return Ok(ExecutionStatus::Skipped);
     }
-    let bili_video = Video::new(cx.bili_client, video_model.bvid.as_str(), &cx.config.credential);
+    let bili_video = Video::new(
+        cx.bili_client,
+        video_model.bvid.as_deref().context("B站视频缺少BV号")?,
+        &cx.config.credential,
+    );
     bili_video
         .get_danmaku_writer(page_info)
         .await?
@@ -826,7 +841,11 @@ pub async fn fetch_page_subtitle(
     if !should_run {
         return Ok(ExecutionStatus::Skipped);
     }
-    let bili_video = Video::new(cx.bili_client, video_model.bvid.as_str(), &cx.config.credential);
+    let bili_video = Video::new(
+        cx.bili_client,
+        video_model.bvid.as_deref().context("B站视频缺少BV号")?,
+        &cx.config.credential,
+    );
     let subtitles = bili_video.get_subtitles(page_info).await?;
     let tasks = subtitles
         .into_iter()

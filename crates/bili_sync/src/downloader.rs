@@ -8,7 +8,7 @@ use async_tempfile::TempFile;
 use futures::TryStreamExt;
 use reqwest::{Method, StatusCode, header};
 use tokio::fs::{self};
-use tokio::io::{AsyncSeekExt, AsyncWriteExt, BufWriter};
+use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufWriter};
 use tokio::process::Command;
 use tokio::task::JoinSet;
 use tokio_util::io::StreamReader;
@@ -18,6 +18,21 @@ use crate::config::{ARGS, ConcurrentDownloadLimit};
 
 pub struct Downloader {
     client: Client,
+}
+
+pub(crate) async fn copy_response(resp: reqwest::Response, file: &mut (impl AsyncWrite + Unpin)) -> Result<()> {
+    let expected = resp.header_content_length();
+    let mut reader = StreamReader::new(resp.bytes_stream().map_err(std::io::Error::other));
+    let mut writer = BufWriter::with_capacity(2 * 1024 * 1024, file);
+    let received = tokio::io::copy(&mut reader, &mut writer).await?;
+    writer.flush().await?;
+    if let Some(expected) = expected {
+        ensure!(
+            received == expected,
+            "downloaded bytes mismatch: expected {expected}, got {received}"
+        );
+    }
+    Ok(())
 }
 
 impl Downloader {
@@ -153,20 +168,7 @@ impl Downloader {
             .send()
             .await?
             .error_for_status_ext()?;
-        let expected = resp.header_content_length();
-        let mut stream_reader = StreamReader::new(resp.bytes_stream().map_err(std::io::Error::other));
-        let mut file_writer = BufWriter::with_capacity(2 * 1024 * 1024, file);
-        let received = tokio::io::copy(&mut stream_reader, &mut file_writer).await?;
-        file_writer.flush().await?;
-        if let Some(expected) = expected {
-            ensure!(
-                received == expected,
-                "downloaded bytes mismatch: expected {}, got {}",
-                expected,
-                received
-            );
-        }
-        Ok(())
+        copy_response(resp, file).await
     }
 
     async fn fetch_parallel(

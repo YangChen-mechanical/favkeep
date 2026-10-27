@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { platformLabels, sourceVideoUrl } from '$lib/platform';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
@@ -168,49 +169,56 @@
 			<h2 class="text-xl font-semibold">视频信息</h2>
 			<div class="flex gap-2">
 				<Button size="sm" variant="outline" href="/watch/{videoData.video.id}">前往播放</Button>
-				<Button
-					size="sm"
-					variant="outline"
-					class="shrink-0 cursor-pointer "
-					onclick={() => (statusEditorOpen = true)}
-					disabled={statusEditorLoading}
-				>
-					<SquarePenIcon class="mr-2 h-4 w-4" />
-					编辑状态
-				</Button>
-				<Button
-					size="sm"
-					variant="outline"
-					class="shrink-0 cursor-pointer "
-					onclick={() => (resetDialogOpen = true)}
-					disabled={resetting || clearAndResetting}
-				>
-					<RotateCcwIcon class="mr-2 h-4 w-4 {resetting ? 'animate-spin' : ''}" />
-					重置
-				</Button>
-				<Button
-					size="sm"
-					variant="outline"
-					class="shrink-0 cursor-pointer "
-					onclick={() => (clearAndResetDialogOpen = true)}
-					disabled={resetting || clearAndResetting}
-				>
-					<BrushCleaningIcon class="mr-2 h-4 w-4 {clearAndResetting ? 'animate-spin' : ''}" />
-					清空重置
-				</Button>
+				{#if videoData.video.platform !== 'douyin'}
+					<Button
+						size="sm"
+						variant="outline"
+						class="shrink-0 cursor-pointer "
+						onclick={() => (statusEditorOpen = true)}
+						disabled={statusEditorLoading}
+					>
+						<SquarePenIcon class="mr-2 h-4 w-4" />
+						编辑状态
+					</Button>
+					<Button
+						size="sm"
+						variant="outline"
+						class="shrink-0 cursor-pointer "
+						onclick={() => (resetDialogOpen = true)}
+						disabled={resetting || clearAndResetting}
+					>
+						<RotateCcwIcon class="mr-2 h-4 w-4 {resetting ? 'animate-spin' : ''}" />
+						重置
+					</Button>
+					<Button
+						size="sm"
+						variant="outline"
+						class="shrink-0 cursor-pointer "
+						onclick={() => (clearAndResetDialogOpen = true)}
+						disabled={resetting || clearAndResetting}
+					>
+						<BrushCleaningIcon class="mr-2 h-4 w-4 {clearAndResetting ? 'animate-spin' : ''}" />
+						清空重置
+					</Button>
+				{/if}
 				<Button
 					size="sm"
 					variant="outline"
 					class="shrink-0 cursor-pointer "
 					onclick={() =>
-						window.open(`https://www.bilibili.com/video/${videoData?.video.bvid}/`, '_blank')}
-					disabled={statusEditorLoading}
+						videoData &&
+						sourceVideoUrl(videoData.video) &&
+						window.open(sourceVideoUrl(videoData.video)!, '_blank', 'noopener,noreferrer')}
+					disabled={!sourceVideoUrl(videoData.video)}
 				>
 					<SquareArrowOutUpRightIcon class="mr-2 h-4 w-4" />
-					在 B 站打开
+					在{platformLabels[videoData.video.platform]}打开
 				</Button>
 			</div>
 		</div>
+		{#if videoData.video.platform === 'douyin'}<p class="text-muted-foreground mb-4 text-sm">
+				抖音仅保存视频内容。下载失败时，请到仪表盘重试抖音同步；暂停时先验证连接并恢复。
+			</p>{/if}
 
 		<div style="margin-bottom: 1rem;">
 			<VideoCard
@@ -232,7 +240,9 @@
 		{#if videoData.pages && videoData.pages.length > 0}
 			<div>
 				<div class="mb-4 flex items-center justify-between">
-					<h2 class="text-xl font-semibold">分页列表</h2>
+					<h2 class="text-xl font-semibold">
+						{videoData.video.platform === 'douyin' ? '视频文件' : '分页列表'}
+					</h2>
 					<div class="text-muted-foreground text-sm">
 						共 {videoData.pages.length} 个分页
 					</div>
@@ -246,6 +256,8 @@
 						<VideoCard
 							video={{
 								id: pageInfo.id,
+								platform: videoData.video.platform,
+								platform_id: videoData.video.platform_id,
 								name: `P${pageInfo.pid}: ${pageInfo.name}`,
 								upper_name: '',
 								download_status: pageInfo.download_status,
@@ -271,7 +283,7 @@
 	</section>
 
 	<!-- 状态编辑器 -->
-	{#if videoData}
+	{#if videoData.video.platform !== 'douyin'}
 		<StatusEditor
 			bind:open={statusEditorOpen}
 			video={videoData.video}

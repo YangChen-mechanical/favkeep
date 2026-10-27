@@ -30,6 +30,8 @@ pub struct Config {
     pub auth_token: String,
     pub bind_address: String,
     pub credential: Credential,
+    #[serde(default)]
+    pub douyin: DouyinConfig,
     pub filter_option: FilterOption,
     pub danmaku_option: DanmakuOption,
     #[serde(default)]
@@ -59,6 +61,28 @@ pub struct Config {
     pub version: u64,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct DouyinConfig {
+    pub interval: u64,
+    pub browser: String,
+    pub path: String,
+}
+
+impl Default for DouyinConfig {
+    fn default() -> Self {
+        Self {
+            interval: 1800,
+            browser: if cfg!(windows) {
+                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe".into()
+            } else {
+                "/usr/bin/chromium".into()
+            },
+            path: CONFIG_DIR.join("douyin-media").to_string_lossy().into_owned(),
+        }
+    }
+}
+
 impl Config {
     pub async fn load_from_database(connection: &DatabaseConnection) -> Result<Option<Result<Self>>> {
         load_db_config(connection).await
@@ -70,6 +94,15 @@ impl Config {
 
     pub fn check(&self) -> Result<()> {
         let mut errors = Vec::new();
+        if !(61..=31_536_000).contains(&self.douyin.interval) {
+            errors.push("抖音同步间隔必须大于 60 秒且不超过一年");
+        }
+        if !PathBuf::from(&self.douyin.path).is_absolute() {
+            errors.push("抖音视频保存路径应为绝对路径");
+        }
+        if !PathBuf::from(&self.douyin.browser).is_absolute() {
+            errors.push("抖音浏览器路径应为绝对路径");
+        }
         if !self.upper_path.is_absolute() {
             errors.push("up 主头像保存的路径应为绝对路径");
         }
@@ -116,6 +149,7 @@ impl Default for Config {
             auth_token: default_auth_token(),
             bind_address: default_bind_address(),
             credential: Credential::default(),
+            douyin: DouyinConfig::default(),
             filter_option: FilterOption::default(),
             danmaku_option: DanmakuOption::default(),
             danmaku_update_policy: DanmakuUpdatePolicy::default(),
@@ -136,5 +170,28 @@ impl Default for Config {
             try_upower_anyway: false,
             version: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_config_defaults_douyin_and_invalid_paths_or_interval_fail_validation() {
+        let mut value = serde_json::to_value(Config::default()).unwrap();
+        value.as_object_mut().unwrap().remove("douyin");
+        let mut config: Config = serde_json::from_value(value).unwrap();
+        assert_eq!(config.douyin.interval, 1800);
+        assert!(PathBuf::from(&config.douyin.browser).is_absolute());
+        assert!(PathBuf::from(&config.douyin.path).is_absolute());
+        assert!(config.check().is_ok());
+        config.douyin.interval = 0;
+        assert!(config.check().is_err());
+        config.douyin.interval = u64::MAX;
+        assert!(config.check().is_err());
+        config.douyin.interval = 1800;
+        config.douyin.path = "relative".into();
+        assert!(config.check().is_err());
     }
 }

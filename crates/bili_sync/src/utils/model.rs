@@ -18,6 +18,7 @@ pub async fn filter_unfilled_videos(
     conn: &DatabaseConnection,
 ) -> Result<Vec<video::Model>> {
     video::Entity::find()
+        .filter(video::Column::Platform.eq("bilibili"))
         .filter(
             video::Column::Valid
                 .eq(true)
@@ -37,6 +38,7 @@ pub async fn filter_unhandled_video_pages(
     connection: &DatabaseConnection,
 ) -> Result<Vec<(video::Model, Vec<page::Model>)>> {
     video::Entity::find()
+        .filter(video::Column::Platform.eq("bilibili"))
         .filter(
             video::Column::Valid
                 .eq(true)

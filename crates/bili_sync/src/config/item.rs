@@ -69,7 +69,7 @@ pub struct SkipOption {
     pub no_subtitle: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum Trigger {
     Interval(u64),

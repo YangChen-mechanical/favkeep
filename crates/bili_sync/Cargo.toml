@@ -23,6 +23,7 @@ base64 = { workspace = true }
 bili_sync_entity = { workspace = true }
 bili_sync_migration = { workspace = true }
 chrono = { workspace = true }
+chromiumoxide = { workspace = true }
 clap = { workspace = true }
 cookie = { workspace = true }
 croner = { workspace = true }
@@ -53,8 +54,10 @@ sea-orm = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_urlencoded = { workspace = true }
+sm3 = { workspace = true }
 strum = { workspace = true }
 sysinfo = { workspace = true }
+tempfile = "3"
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-cron-scheduler = { workspace = true }
@@ -73,9 +76,6 @@ validator = { workspace = true }
 [build-dependencies]
 built = { workspace = true }
 git2 = { workspace = true }
-
-[dev-dependencies]
-tempfile = "3"
 
 [package.metadata.release]
 release = true

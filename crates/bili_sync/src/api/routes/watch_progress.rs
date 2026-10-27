@@ -136,7 +136,7 @@ mod tests {
         page::ActiveModel {
             id: Set(1),
             video_id: Set(1),
-            cid: Set(1),
+            cid: Set(Some(1)),
             pid: Set(1),
             name: Set("Sample".into()),
             duration: Set(60),

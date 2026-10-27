@@ -7,6 +7,7 @@
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import type { VideoInfo } from '$lib/types';
+	import { platformLabels, sourceVideoUrl } from '$lib/platform';
 	import BrushCleaningIcon from '@lucide/svelte/icons/brush-cleaning';
 	import ClockIcon from '@lucide/svelte/icons/clock';
 	import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
@@ -20,7 +21,7 @@
 	import * as Tooltip from '$lib/components/ui/tooltip/index.js';
 
 	// 将 bvid 设置为可选属性，但保留 VideoInfo 的其它所有属性
-	export let video: Omit<VideoInfo, 'bvid'> & { bvid?: string };
+	export let video: Omit<VideoInfo, 'bvid'> & { bvid?: string | null };
 	export let source: { type: string; name: string } | null = null; // 视频源信息
 	export let showActions: boolean = true; // 控制是否显示操作按钮
 	export let mode: 'default' | 'detail' | 'page' = 'default'; // 卡片模式
@@ -90,6 +91,7 @@
 	}
 
 	function getTaskName(index: number): string {
+		if (video.platform === 'douyin') return '视频内容';
 		if (taskNames.length > 0) {
 			return taskNames[index] || `任务${index + 1}`;
 		}
@@ -97,9 +99,14 @@
 		return defaultTaskNames[index] || `任务${index + 1}`;
 	}
 
-	$: overallStatus = getOverallStatus(video.download_status, video.should_download, video.valid);
-	$: completed = video.download_status.filter((status) => status === 7).length;
-	$: total = video.download_status.length;
+	$: statuses =
+		video.platform === 'douyin'
+			? [video.download_status[mode === 'page' ? 1 : 4]]
+			: video.download_status;
+	$: overallStatus = getOverallStatus(statuses, video.should_download, video.valid);
+	$: completed = statuses.filter((status) => status === 7).length;
+	$: total = statuses.length;
+	$: sourceUrl = sourceVideoUrl(video);
 
 	async function handleReset() {
 		resetting = true;
@@ -143,6 +150,9 @@
 				title={displayTitle}
 			>
 				{displayTitle}
+				{#if mode !== 'page'}<span class="text-muted-foreground ml-2 text-xs"
+						>{platformLabels[video.platform]}</span
+					>{/if}
 			</CardTitle>
 			<Badge
 				variant="secondary"
@@ -192,7 +202,7 @@
 					</div>
 					<!-- 进度条 -->
 					<div class="flex w-full gap-0.5">
-						{#each video.download_status as status, index (index)}
+						{#each statuses as status, index (index)}
 							<Tooltip.Root>
 								<Tooltip.Trigger class="flex-1">
 									<div
@@ -236,24 +246,26 @@
 							{/snippet}
 						</DropdownMenu.Trigger>
 						<DropdownMenu.Content align="start" class="w-48">
-							<DropdownMenu.Item class="cursor-pointer" onclick={() => (resetDialogOpen = true)}>
-								<RotateCcwIcon class="mr-2 h-4 w-4" />
-								重置
-							</DropdownMenu.Item>
+							{#if video.platform !== 'douyin'}
+								<DropdownMenu.Item class="cursor-pointer" onclick={() => (resetDialogOpen = true)}>
+									<RotateCcwIcon class="mr-2 h-4 w-4" />
+									重置
+								</DropdownMenu.Item>
+								<DropdownMenu.Item
+									class="cursor-pointer"
+									onclick={() => (clearAndResetDialogOpen = true)}
+								>
+									<BrushCleaningIcon class="mr-2 h-4 w-4" />
+									清空重置
+								</DropdownMenu.Item>
+							{/if}
 							<DropdownMenu.Item
 								class="cursor-pointer"
-								onclick={() => (clearAndResetDialogOpen = true)}
-							>
-								<BrushCleaningIcon class="mr-2 h-4 w-4" />
-								清空重置
-							</DropdownMenu.Item>
-							<DropdownMenu.Item
-								class="cursor-pointer"
-								onclick={() =>
-									window.open(`https://www.bilibili.com/video/${video.bvid}/`, '_blank')}
+								onclick={() => sourceUrl && window.open(sourceUrl, '_blank', 'noopener,noreferrer')}
+								disabled={!sourceUrl}
 							>
 								<SquareArrowOutUpRightIcon class="mr-2 h-4 w-4" />
-								在 B 站打开
+								在{platformLabels[video.platform]}打开
 							</DropdownMenu.Item>
 						</DropdownMenu.Content>
 					</DropdownMenu.Root>

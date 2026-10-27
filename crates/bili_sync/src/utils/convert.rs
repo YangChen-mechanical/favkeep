@@ -21,7 +21,8 @@ impl VideoInfo {
                 ctime,
                 pubtime,
             } => bili_sync_entity::video::ActiveModel {
-                bvid: Set(bvid),
+                platform_id: Set(Some(bvid.clone())),
+                bvid: Set(Some(bvid)),
                 cover: Set(cover),
                 ctime: Set(ctime.naive_utc()),
                 pubtime: Set(pubtime.naive_utc()),
@@ -41,7 +42,8 @@ impl VideoInfo {
                 pubtime,
                 attr,
             } => bili_sync_entity::video::ActiveModel {
-                bvid: Set(bvid),
+                platform_id: Set(Some(bvid.clone())),
+                bvid: Set(Some(bvid)),
                 name: Set(title),
                 category: Set(vtype),
                 intro: Set(intro),
@@ -51,7 +53,7 @@ impl VideoInfo {
                 favtime: Set(fav_time.naive_utc()),
                 download_status: Set(0),
                 valid: Set(attr == 0 || attr == 4),
-                upper_id: Set(upper.mid),
+                upper_id: Set(Some(upper.mid)),
                 upper_name: Set(upper.name),
                 upper_face: Set(upper.face),
                 ..default
@@ -67,7 +69,8 @@ impl VideoInfo {
                 pubtime,
                 state,
             } => bili_sync_entity::video::ActiveModel {
-                bvid: Set(bvid),
+                platform_id: Set(Some(bvid.clone())),
+                bvid: Set(Some(bvid)),
                 name: Set(title),
                 category: Set(2), // 稍后再看里的内容类型肯定是视频
                 intro: Set(intro),
@@ -77,7 +80,7 @@ impl VideoInfo {
                 favtime: Set(fav_time.naive_utc()),
                 download_status: Set(0),
                 valid: Set(state == 0),
-                upper_id: Set(upper.mid),
+                upper_id: Set(Some(upper.mid)),
                 upper_name: Set(upper.name),
                 upper_face: Set(upper.face),
                 ..default
@@ -89,7 +92,8 @@ impl VideoInfo {
                 cover,
                 ctime,
             } => bili_sync_entity::video::ActiveModel {
-                bvid: Set(bvid),
+                platform_id: Set(Some(bvid.clone())),
+                bvid: Set(Some(bvid)),
                 name: Set(title),
                 intro: Set(intro),
                 cover: Set(cover),
@@ -105,7 +109,8 @@ impl VideoInfo {
                 cover,
                 pubtime,
             } => bili_sync_entity::video::ActiveModel {
-                bvid: Set(bvid),
+                platform_id: Set(Some(bvid.clone())),
+                bvid: Set(Some(bvid)),
                 name: Set(title),
                 intro: Set(desc),
                 cover: Set(cover),
@@ -142,7 +147,8 @@ impl VideoInfo {
                 redirect_url,
                 ..
             } => bili_sync_entity::video::ActiveModel {
-                bvid: Set(bvid),
+                platform_id: Set(Some(bvid.clone())),
+                bvid: Set(Some(bvid)),
                 name: Set(title),
                 intro: Set(intro),
                 cover: Set(cover),
@@ -163,7 +169,7 @@ impl VideoInfo {
                 valid: Set(state == 0
                     && (try_upower_anyway || (is_upower_exclusive == is_upower_play))
                     && redirect_url.is_none()),
-                upper_id: Set(upper.mid),
+                upper_id: Set(Some(upper.mid)),
                 upper_name: Set(upper.name),
                 upper_face: Set(upper.face),
                 staff: Set(staff.map(Into::into)),
@@ -211,7 +217,7 @@ impl PageInfo {
         };
         bili_sync_entity::page::ActiveModel {
             video_id: Set(video_model_id),
-            cid: Set(self.cid),
+            cid: Set(Some(self.cid)),
             pid: Set(self.page),
             name: Set(self.name),
             width: Set(width),

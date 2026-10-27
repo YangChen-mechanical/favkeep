@@ -228,6 +228,7 @@
 			const filterParams = ToFilterParams($appStateStore);
 			const result = await api.resetFilteredVideoStatus({
 				...filterParams,
+				platform: 'bilibili',
 				force: forceReset
 			});
 			const data = result.data;
@@ -257,7 +258,8 @@
 			const filterParams = ToFilterParams($appStateStore);
 			const fullRequest = {
 				...filterParams,
-				...request
+				...request,
+				platform: 'bilibili' as const
 			};
 			const result = await api.updateFilteredVideoStatus(fullRequest);
 			const data = result.data;
@@ -503,7 +505,7 @@
 				disabled={updatingAll || loading}
 			>
 				<SquarePenIcon class="mr-1.5 h-3 w-3" />
-				{hasFilters ? '编辑筛选' : '编辑全部'}
+				{hasFilters ? '编辑筛选的B站视频' : '编辑全部B站视频'}
 			</Button>
 			<Button
 				size="sm"
@@ -513,7 +515,7 @@
 				disabled={resettingAll || loading}
 			>
 				<RotateCcwIcon class="mr-1.5 h-3 w-3 {resettingAll ? 'animate-spin' : ''}" />
-				{hasFilters ? '重置筛选' : '重置全部'}
+				{hasFilters ? '重置筛选的B站视频' : '重置全部B站视频'}
 			</Button>
 		</div>
 	</div>
@@ -559,17 +561,17 @@
 <AlertDialog.Root bind:open={resetAllDialogOpen}>
 	<AlertDialog.Content>
 		<AlertDialog.Header>
-			<AlertDialog.Title>{hasFilters ? '重置筛选视频' : '重置全部视频'}</AlertDialog.Title>
+			<AlertDialog.Title>{hasFilters ? '重置筛选的B站视频' : '重置全部B站视频'}</AlertDialog.Title>
 			<AlertDialog.Description>
 				{#if hasFilters}
-					确定要重置<strong>符合以下筛选条件</strong>的视频的下载状态吗？<br />
+					确定要重置<strong>符合以下筛选条件的B站视频</strong>的下载状态吗？<br />
 					<div class="bg-muted my-2 rounded-md p-2 text-left">
 						{#each filterDescriptionParts as part, index (index)}
 							<div><strong>{part}</strong></div>
 						{/each}
 					</div>
 				{:else}
-					确定要重置<strong>全部视频</strong>的下载状态吗？<br />
+					确定要重置<strong>全部B站视频</strong>的下载状态吗？<br />
 				{/if}
 				此操作会将所有的失败状态重置为未开始，<span class="text-destructive font-medium"
 					>无法撤销</span

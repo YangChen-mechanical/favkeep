@@ -2,6 +2,7 @@ use axum::Router;
 
 mod config;
 mod dashboard;
+mod douyin;
 mod login;
 mod me;
 mod media;
@@ -18,6 +19,7 @@ pub fn router() -> Router {
     Router::new().nest(
         "/api",
         config::router()
+            .merge(douyin::router())
             .merge(me::router())
             .merge(login::router())
             .merge(video_sources::router())

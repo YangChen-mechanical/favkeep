@@ -9,7 +9,7 @@ use chrono::serde::ts_seconds;
 use chrono::{DateTime, Utc};
 pub use client::{BiliClient, Client};
 pub use collection::{Collection, CollectionItem, CollectionType};
-pub use credential::{Credential, PollStatus, Qrcode};
+pub use credential::{Credential, PollStatus};
 pub use danmaku::DanmakuOption;
 pub use dynamic::Dynamic;
 pub use error::BiliError;

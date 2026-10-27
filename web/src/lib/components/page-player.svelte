@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { platformLabels, sourceVideoUrl } from '$lib/platform';
 	import { onMount } from 'svelte';
 	import CheckIcon from '@lucide/svelte/icons/check';
 	import CircleIcon from '@lucide/svelte/icons/circle';
@@ -147,9 +148,9 @@
 	</div>
 	<div class="video-details">
 		<div class="video-kicker">
-			<span class="saved-dot"></span>已保存到本地<span>·</span>{formatTime(page.duration)}<span
+			<span class="saved-dot"></span>已保存到本地<span>·</span>{platformLabels[video.platform]}<span
 				>·</span
-			>P{page.pid}
+			>{formatTime(page.duration)}<span>·</span>P{page.pid}
 		</div>
 		<h1>{video.name}</h1>
 		<div class="details-bottom">
@@ -158,6 +159,13 @@
 					>{video.upper_name}</span
 				>
 			</div>
+			{#if sourceVideoUrl(video)}<Button
+					variant="outline"
+					size="sm"
+					href={sourceVideoUrl(video)!}
+					target="_blank"
+					rel="noopener noreferrer">在{platformLabels[video.platform]}打开</Button
+				>{/if}
 			<Button
 				variant="outline"
 				size="sm"

@@ -69,6 +69,12 @@ pub async fn get_videos(
     Query(params): Query<VideosRequest>,
 ) -> Result<ApiResponse<VideosResponse>, ApiError> {
     let mut query = video::Entity::find();
+    if let Some(platform) = &params.platform {
+        if !matches!(platform.as_str(), "bilibili" | "douyin") {
+            return Err(InnerApiError::BadRequest("无效的平台".into()).into());
+        }
+        query = query.filter(video::Column::Platform.eq(platform));
+    }
     if let Some(state) = params.watch_state {
         let having = match state {
             WatchState::Watched => "SUM(COALESCE(w.completed,0)) = COUNT(*)",
@@ -202,6 +208,9 @@ pub async fn reset_video_status(
     let Some(mut video_info) = video_info else {
         return Err(InnerApiError::NotFound(id).into());
     };
+    if video_info.platform == "douyin" && request.force {
+        return Err(InnerApiError::BadRequest("抖音仅支持重试失败下载".into()).into());
+    }
     let resetted_pages_info = pages_info
         .into_iter()
         .filter_map(|mut page_info| {
@@ -253,6 +262,9 @@ pub async fn clear_and_reset_video_status(
     let Some(video_info) = video_info else {
         return Err(InnerApiError::NotFound(id).into());
     };
+    if video_info.platform == "douyin" {
+        return Err(InnerApiError::BadRequest("抖音不支持清理重下".into()).into());
+    }
     let txn = db.begin().await?;
     let mut video_info = video_info.into_active_model();
     video_info.single_page = Set(None);
@@ -278,6 +290,8 @@ pub async fn clear_and_reset_video_status(
         warning,
         video: VideoInfo {
             id: video_info.id,
+            platform: video_info.platform,
+            platform_id: video_info.platform_id,
             bvid: video_info.bvid,
             name: video_info.name,
             upper_name: video_info.upper_name,
@@ -296,7 +310,7 @@ pub async fn reset_filtered_video_status(
     Extension(db): Extension<DatabaseConnection>,
     Json(request): Json<ResetFilteredVideoStatusRequest>,
 ) -> Result<ApiResponse<ResetFilteredVideosResponse>, ApiError> {
-    let mut query = video::Entity::find();
+    let mut query = video::Entity::find().filter(video::Column::Platform.eq("bilibili"));
     for (field, column) in [
         (request.collection, video::Column::CollectionId),
         (request.favorite, video::Column::FavoriteId),
@@ -394,6 +408,9 @@ pub async fn update_video_status(
     let Some(mut video_info) = video_info else {
         return Err(InnerApiError::NotFound(id).into());
     };
+    if video_info.platform == "douyin" {
+        return Err(InnerApiError::BadRequest("抖音状态由扫描与下载任务维护".into()).into());
+    }
     let mut video_status = VideoStatus::from(video_info.download_status);
     for update in &request.video_updates {
         video_status.set(update.status_index, update.status_value);
@@ -437,7 +454,7 @@ pub async fn update_filtered_video_status(
     Extension(db): Extension<DatabaseConnection>,
     ValidatedJson(request): ValidatedJson<UpdateFilteredVideoStatusRequest>,
 ) -> Result<ApiResponse<UpdateFilteredVideoStatusResponse>, ApiError> {
-    let mut query = video::Entity::find();
+    let mut query = video::Entity::find().filter(video::Column::Platform.eq("bilibili"));
     for (field, column) in [
         (request.collection, video::Column::CollectionId),
         (request.favorite, video::Column::FavoriteId),
@@ -529,6 +546,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn douyin_filters_and_bili_mutations_preserve_qualified_media() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        video::ActiveModel::from(video::Model {
+            id: 1,
+            platform: "douyin".into(),
+            platform_id: Some("old-video-new-collection".into()),
+            name: "saved video".into(),
+            download_status: 1,
+            ..Default::default()
+        })
+        .insert(&db)
+        .await
+        .unwrap();
+        page::ActiveModel {
+            id: Set(1),
+            video_id: Set(1),
+            pid: Set(1),
+            name: Set("saved video".into()),
+            duration: Set(25),
+            download_status: Set(1 << 3),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        let response = list(&db, "platform=douyin").await;
+        assert_eq!(response["total_count"], 1);
+        assert_eq!(response["videos"][0]["platform_id"], "old-video-new-collection");
+        assert_eq!(response["videos"][0]["bvid"], Value::Null);
+        assert_eq!(list(&db, "platform=bilibili").await["total_count"], 0);
+        for (path, body, expected) in [
+            ("/videos/1/clear-and-reset-status", json!({}), StatusCode::BAD_REQUEST),
+            ("/videos/1/reset-status", json!({"force":true}), StatusCode::BAD_REQUEST),
+            (
+                "/videos/1/update-status",
+                json!({"video_updates":[{"status_index":4,"status_value":7}]}),
+                StatusCode::BAD_REQUEST,
+            ),
+            ("/videos/reset-status", json!({"force":true}), StatusCode::OK),
+            (
+                "/videos/update-status",
+                json!({"video_updates":[{"status_index":4,"status_value":7}]}),
+                StatusCode::OK,
+            ),
+        ] {
+            let response = router()
+                .layer(Extension(db.clone()))
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "{path}");
+            assert_eq!(
+                video::Entity::find_by_id(1)
+                    .one(&db)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .download_status,
+                1
+            );
+            assert_eq!(
+                page::Entity::find_by_id(1)
+                    .one(&db)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .download_status,
+                1 << 3
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn saved_only_filters_before_pagination_without_changing_existing_queries() {
         let db = Database::connect("sqlite::memory:").await.unwrap();
         Migrator::up(&db, None).await.unwrap();
@@ -536,7 +634,7 @@ mod tests {
             video::ActiveModel::from(video::Model {
                 id,
                 name: format!("Video {id}"),
-                bvid: format!("BV{id}"),
+                bvid: Some(format!("BV{id}")),
                 upper_name: format!("Author{id}"),
                 // Saved files remain watchable even if the source is now invalid or skipped.
                 valid: false,
@@ -561,7 +659,7 @@ mod tests {
             page::ActiveModel {
                 id: Set(id),
                 video_id: Set(video_id),
-                cid: Set(id.into()),
+                cid: Set(Some(id.into())),
                 pid: Set(id),
                 name: Set(format!("Part {id}")),
                 duration: Set(60),

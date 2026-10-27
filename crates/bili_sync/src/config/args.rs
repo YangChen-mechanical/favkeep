@@ -35,6 +35,10 @@ pub struct Args {
     /// Stop the server before using this local administrator recovery command.
     #[arg(long)]
     pub reset_password: bool,
+
+    /// Stop the server before importing a dedicated same-account private session export.
+    #[arg(long, value_name = "PRIVATE_AUTH_JSON", conflicts_with = "reset_password")]
+    pub douyin_import_session: Option<PathBuf>,
 }
 
 mod built_info {

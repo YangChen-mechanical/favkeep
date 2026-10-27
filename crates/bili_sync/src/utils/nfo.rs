@@ -261,7 +261,7 @@ mod tests {
         let video = video::Model {
             intro: "intro".to_string(),
             name: "name".to_string(),
-            upper_id: 1,
+            upper_id: Some(1),
             upper_name: "upper_name".to_string(),
             upper_face: "https://i1.hdslb.com/bfs/face/72e8f33cadc72e022fc34624cc69e1b12ebb72c0.jpg".to_string(),
             favtime: chrono::NaiveDateTime::new(
@@ -272,7 +272,7 @@ mod tests {
                 chrono::NaiveDate::from_ymd_opt(2033, 3, 3).unwrap(),
                 chrono::NaiveTime::from_hms_opt(3, 3, 3).unwrap(),
             ),
-            bvid: "BV1nWcSeeEkV".to_string(),
+            bvid: Some("BV1nWcSeeEkV".to_string()),
             tags: Some(vec!["tag1".to_owned(), "tag2".to_owned()].into()),
             ..Default::default()
         };
@@ -366,7 +366,7 @@ impl<'a> ToNFO<'a, Movie<'a>> for &'a video::Model {
         Movie {
             name: &self.name,
             intro: &self.intro,
-            bvid: &self.bvid,
+            bvid: self.bvid.as_deref().unwrap_or_default(),
             uppers: self.uppers().collect(),
             premiered: match nfo_time_type {
                 NFOTimeType::FavTime => self.favtime,
@@ -382,7 +382,7 @@ impl<'a> ToNFO<'a, TVShow<'a>> for &'a video::Model {
         TVShow {
             name: &self.name,
             intro: &self.intro,
-            bvid: &self.bvid,
+            bvid: self.bvid.as_deref().unwrap_or_default(),
             uppers: self.uppers().collect(),
             premiered: match nfo_time_type {
                 NFOTimeType::FavTime => self.favtime,
