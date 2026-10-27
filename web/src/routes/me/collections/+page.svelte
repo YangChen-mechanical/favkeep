@@ -43,6 +43,7 @@
 
 	onMount(async () => {
 		setBreadcrumb([
+			{ label: 'B站', href: '/platforms/bilibili?view=sources' },
 			{
 				label: '我追的合集 / 收藏夹'
 			}
@@ -56,6 +57,10 @@
 <svelte:head>
 	<title>我追的合集 / 收藏夹 - Bili Sync</title>
 </svelte:head>
+
+<a class="mb-4 inline-block text-sm underline" href="/platforms/bilibili?view=sources"
+	>返回 B站收藏来源</a
+>
 
 <div>
 	<div class="mb-6 flex items-center justify-between">

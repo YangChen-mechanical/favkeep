@@ -50,10 +50,15 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
     let resumes = 0;
     let runs = 0;
     let progress = null;
+    let biliRuns = 0;
+    let douyinReads = 0;
+    let douyinConfigWrites = 0;
     const changes = [];
     const queries = [];
     const qrImage = 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="white"/></svg>').toString('base64');
-    await context.routeWebSocket('**/api/ws', socket => socket.onMessage(() => {}));
+    await context.routeWebSocket('**/api/ws', socket => socket.onMessage(message => {
+      if (JSON.parse(message).subscribe === 'tasks') socket.send(JSON.stringify({ tasks: { is_running: false, last_run: null, last_finish: null, next_run: '2026-10-26T12:31:00Z' } }));
+    }));
     await context.route('**/api/**', async route => {
       const request = route.request();
       const url = new URL(request.url());
@@ -63,11 +68,14 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
         assert.equal(request.headers().origin, origin);
       }
       if (url.pathname === '/api/auth/session') return json({ setup_required: false, authenticated: true, username: 'smoke', csrf_token: 'douyin-smoke-csrf' });
-      if (url.pathname === '/api/config') return json(config);
+      if (url.pathname === '/api/config') {
+        if (request.method() === 'PUT') Object.assign(config, request.postDataJSON(), { version: config.version + 1 });
+        return json(config);
+      }
       if (url.pathname === '/api/config/notifiers') return json({ version: config.version, items: [] });
-      if (url.pathname === '/api/douyin/status') return json(status);
+      if (url.pathname === '/api/douyin/status') { douyinReads++; return json(status); }
       if (url.pathname === '/api/config/douyin') {
-        status.interval = request.postDataJSON().interval;
+        douyinConfigWrites++; status.interval = request.postDataJSON().interval;
         assert.equal(config.interval, 1200, 'Douyin interval must not alter Bili interval');
         config.version++;
         return json(status);
@@ -101,6 +109,7 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
         return json(true);
       }
       if (url.pathname === '/api/task/douyin') { runs++; status.task.is_running = true; return json(true); }
+      if (url.pathname === '/api/task/download') { biliRuns++; return json(true); }
       if (url.pathname === '/api/dashboard') return json({ enabled_favorites: 0, enabled_collections: 0, enabled_submissions: 0, enable_watch_later: false, videos_by_day: [] });
       if (url.pathname === '/api/videos') {
         queries.push(url.searchParams);
@@ -128,12 +137,29 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
     });
 
     await page.goto(origin + '/settings');
-    await page.getByRole('tab', { name: '平台连接', exact: true }).click();
+    await expect(page.getByRole('region', { name: '访问与密码', exact: true })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '平台连接', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: 'B站视频处理', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '连接抖音', exact: true })).toHaveCount(0);
+    await page.locator('a[data-sidebar="menu-button"][href="/platforms/douyin"]').click();
+    await expect(page).toHaveURL(origin + '/platforms/douyin');
+    await expect(page.locator('a[data-sidebar="menu-button"][href="/platforms/douyin"]')).toHaveAttribute('aria-current', 'page');
     const connection = page.getByRole('region', { name: '抖音连接', exact: true });
     await expect(connection).toContainText('已连接');
-    await connection.getByLabel('抖音同步间隔（秒）').fill('1801');
-    await connection.getByRole('button', { name: '保存抖音间隔' }).click();
+    assert.equal(qrGenerations, 0, 'Opening a connected platform must not start login');
+    await page.getByRole('tab', { name: '3. 同步任务', exact: true }).click();
+    await expect(page).toHaveURL(origin + '/platforms/douyin?view=sync');
+    await page.getByLabel('抖音同步间隔（秒）').fill('60');
+    await page.getByRole('button', { name: '保存同步间隔' }).click();
+    await expect(page.getByText('抖音同步间隔须为 61 至 31536000 的整数秒', {exact: true})).toBeVisible();
+    assert.equal(douyinConfigWrites, 0);
+    await page.getByLabel('抖音同步间隔（秒）').fill('1801');
+    await page.getByRole('button', { name: '保存同步间隔' }).click();
     await expect.poll(() => status.interval).toBe(1801);
+    await page.reload();
+    await expect(page.getByRole('tab', { name: '3. 同步任务', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByLabel('抖音同步间隔（秒）')).toHaveValue('1801');
+    await page.getByRole('tab', { name: '1. 连接账号', exact: true }).click();
     await connection.getByRole('button', { name: '重新登录', exact: true }).click();
     await expect.poll(() => qrGenerations).toBe(1);
     await expect.poll(() => qrPolls).toBeGreaterThan(0);
@@ -151,8 +177,14 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
     await page.keyboard.press('Escape');
     assert.equal(refreshes, 1, 'Pending or failed login must not refresh folders');
 
-    await page.goto(origin + '/video-sources');
-    await page.getByRole('tab', { name: '抖音收藏夹', exact: true }).click();
+    await page.getByRole('link', { name: '下一步：选择收藏来源', exact: true }).click();
+    await expect(page).toHaveURL(origin + '/platforms/douyin?view=sources');
+    await page.goBack();
+    await expect(connection).toBeVisible();
+    await page.goForward();
+    await expect(page.getByRole('region', { name: '抖音收藏夹', exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole('tab', { name: '2. 收藏来源', exact: true })).toHaveAttribute('aria-selected', 'true');
     const selectedFolder = page.getByRole('checkbox', { name: '同步收藏夹 抖音精选', exact: true });
     await expect(selectedFolder).toBeChecked();
     await expect(page.getByRole('row', { name: /抖音精选/ })).toContainText('同步成功');
@@ -168,8 +200,40 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
     await page.getByRole('button', { name: '刷新抖音收藏夹', exact: true }).click();
     await expect.poll(() => refreshes).toBe(2);
 
+    await page.screenshot({ path: path.join(output, 'douyin-sources-desktop.png'), fullPage: true });
+    const readsBeforeBili = douyinReads;
+    await page.locator('a[data-sidebar="menu-button"][href="/platforms/bilibili"]').click();
+    await expect(page.getByRole('region', { name: 'B站连接', exact: true })).toContainText('B 站凭据已配置');
+    await page.getByRole('link', { name: '下一步：选择收藏来源', exact: true }).click();
+    await expect(page.getByRole('tab', { name: '收藏夹', exact: true })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '抖音收藏夹', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: '从我的收藏夹添加', exact: true })).toHaveAttribute('href', '/me/favorites');
+    await page.getByRole('link', { name: '下一步：查看同步任务', exact: true }).click();
+    await expect(page.getByRole('button', { name: '立即执行下载任务', exact: true })).toBeVisible();
+    await page.getByLabel('B站同步间隔（秒或 Cron）').fill('2400');
+    await page.getByRole('button', { name: '保存同步间隔', exact: true }).click();
+    await expect.poll(() => config.interval).toBe(2400);
+    assert.equal(status.interval, 1801, 'Bili settings must preserve Douyin interval');
+    await page.getByRole('button', { name: '立即执行下载任务', exact: true }).click();
+    await expect.poll(() => biliRuns).toBe(1);
+    await page.getByRole('tab', { name: '4. 下载设置', exact: true }).click();
+    await expect(page.getByLabel('视频名称模板', { exact: true })).toHaveValue('title');
+    await page.getByLabel('视频名称模板', { exact: true }).fill('changed title');
+    await page.getByRole('button', { name: '保存 B站下载设置', exact: true }).click();
+    await expect.poll(() => config.video_name).toBe('changed title');
+    assert.equal(config.interval, 2400);
+    assert.equal(status.interval, 1801);
+    await page.screenshot({ path: path.join(output, 'bilibili-settings-desktop.png'), fullPage: true });
+    await page.getByRole('tab', { name: '弹幕渲染', exact: true }).click();
+    await expect(page.getByRole('button', { name: '保存 B站下载设置', exact: true })).toBeVisible();
+    assert.equal(douyinReads, readsBeforeBili, 'Bili pages must not poll Douyin');
+    await page.goto(origin + '/video-sources');
+    await expect(page).toHaveURL(origin + '/platforms/bilibili?view=sources');
+    await page.goto(origin + '/video-sources?platform=douyin');
+    await expect(page).toHaveURL(origin + '/platforms/douyin?view=sources');
+
     status.auth_state = 'paused'; status.paused_reason = 'rejected'; status.rejections = 3; status.task.last_error = 'rejected'; status.task.next_run = null;
-    await page.goto(origin + '/');
+    await page.goto(origin + '/platforms/douyin?view=sync');
     const task = page.getByRole('region', { name: '抖音任务', exact: true });
     await expect(task).toContainText('连续拒绝 3 次');
     await expect(task.getByRole('button', { name: '立即同步抖音', exact: true })).toHaveCount(0);
@@ -197,15 +261,18 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
     await expect(page.getByText('抖音仅保存视频内容。', { exact: false })).toBeVisible();
     for (const width of [390, 350]) {
       await page.setViewportSize({ width, height: 844 });
-      for (const route of ['/settings', '/video-sources', '/', '/watch?platform=douyin', '/watch/2', '/video/2']) {
+      for (const route of ['/settings', '/platforms/douyin', '/platforms/douyin?view=sources', '/platforms/douyin?view=sync', '/platforms/bilibili', '/platforms/bilibili?view=sources', '/platforms/bilibili?view=sync', '/platforms/bilibili?view=settings', '/', '/watch?platform=douyin', '/watch/2', '/video/2']) {
         await page.goto(origin + route);
-        if (route === '/settings') await page.getByRole('tab', { name: '平台连接', exact: true }).click();
-        if (route === '/video-sources') await page.getByRole('tab', { name: '抖音收藏夹', exact: true }).click();
+        if (route.startsWith('/platforms/')) {
+          await expect(page.getByRole('heading', { name: route.includes('douyin') ? '抖音' : 'B站', exact: true, level: 1 })).toBeVisible();
+          if (route.includes('view=sources')) await expect(page.getByText(route.includes('douyin') ? '抖音精选' : '暂无收藏夹', { exact: true })).toBeVisible();
+          if (route.includes('view=sync')) await expect(page.getByRole('region', { name: '同步计划', exact: true })).toContainText('同步间隔');
+        }
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), { message: `Horizontal overflow at ${route}, width ${width}` }).toBe(true);
-        if (width === 390) await page.screenshot({ path: path.join(output, `${route.split('?')[0].replaceAll('/', '-') || 'dashboard'}-mobile.png`), fullPage: true });
+        if (width === 390) await page.screenshot({ path: path.join(output, `${route.replaceAll('/', '-').replaceAll('?', '-').replaceAll('=', '-') || 'dashboard'}-mobile.png`), fullPage: true });
       }
     }
     assert.deepEqual(errors, []);
-    console.log('PASS: Douyin session restore without QR, pending image/reuse/error, interval isolation, folder selection/baseline/manual refresh, pause/resume, platform filters, actual source links, local playback and mobile layout.');
+    console.log('PASS: Platform navigation/deep links/back/reload, Bili isolation/settings/task, general settings, Douyin session restore without QR, pending image/reuse/error, interval isolation, folder selection/baseline/manual refresh, pause/resume, platform filters, actual source links, local playback and mobile layout.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

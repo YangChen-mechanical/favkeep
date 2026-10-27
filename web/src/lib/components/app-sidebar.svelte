@@ -1,14 +1,13 @@
 <script lang="ts">
 	import BotIcon from '@lucide/svelte/icons/bot';
 	import ChartPieIcon from '@lucide/svelte/icons/chart-pie';
-	import DatabaseIcon from '@lucide/svelte/icons/database';
 	import FilePlayIcon from '@lucide/svelte/icons/file-play';
-	import FoldersIcon from '@lucide/svelte/icons/folders';
+	import MusicIcon from '@lucide/svelte/icons/music-2';
+	import { page } from '$app/stores';
 	import HeartIcon from '@lucide/svelte/icons/heart';
 	import PaletteIcon from '@lucide/svelte/icons/palette';
 	import Settings2Icon from '@lucide/svelte/icons/settings-2';
 	import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal';
-	import UserIcon from '@lucide/svelte/icons/user';
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
 	import { mode, toggleMode } from 'mode-watcher';
 	import type { ComponentProps } from 'svelte';
@@ -19,7 +18,7 @@
 
 	const data = {
 		header: {
-			title: 'Bili Sync',
+			title: 'favkeep',
 			subtitle: '后台管理系统',
 			icon: BotIcon,
 			href: '/'
@@ -41,40 +40,13 @@
 				]
 			},
 			{
-				category: '内容管理',
+				category: '平台',
 				items: [
-					{
-						title: '视频',
-						icon: FilePlayIcon,
-						href: '/videos'
-					},
-					{
-						title: '视频源',
-						icon: DatabaseIcon,
-						href: '/video-sources'
-					}
+					{ title: 'B站', icon: HeartIcon, href: '/platforms/bilibili' },
+					{ title: '抖音', icon: MusicIcon, href: '/platforms/douyin' }
 				]
 			},
-			{
-				category: '快捷订阅',
-				items: [
-					{
-						title: '我创建的收藏夹',
-						icon: HeartIcon,
-						href: '/me/favorites'
-					},
-					{
-						title: '我追的合集 / 收藏夹',
-						icon: FoldersIcon,
-						href: '/me/collections'
-					},
-					{
-						title: '我关注的 UP 主',
-						icon: UserIcon,
-						href: '/me/uppers'
-					}
-				]
-			}
+			{ category: '媒体', items: [{ title: '全部视频', icon: FilePlayIcon, href: '/videos' }] }
 		],
 		footer: [
 			{
@@ -83,13 +55,17 @@
 				href: '/watch'
 			},
 			{
-				title: '设置',
+				title: '通用设置',
 				icon: Settings2Icon,
 				href: '/settings'
 			}
 		]
 	};
 
+	function isActive(href: string) {
+		const path = $page.url.pathname;
+		return path === href || (href === '/platforms/bilibili' && path.startsWith('/me/'));
+	}
 	const closeMobileSidebar = () => {
 		if (sidebar.isMobile) {
 			sidebar.setOpenMobile(false);
@@ -126,9 +102,14 @@
 				<Sidebar.Menu>
 					{#each group.items as item (item.title)}
 						<Sidebar.MenuItem>
-							<Sidebar.MenuButton class="h-8">
+							<Sidebar.MenuButton class="h-8" isActive={isActive(item.href)}>
 								{#snippet child({ props })}
-									<a href={item.href} {...props} onclick={closeMobileSidebar}>
+									<a
+										href={item.href}
+										{...props}
+										aria-current={isActive(item.href) ? 'page' : undefined}
+										onclick={closeMobileSidebar}
+									>
 										<item.icon class="size-4" />
 										<span class="text-sm">{item.title}</span>
 									</a>
@@ -161,9 +142,14 @@
 			</Sidebar.MenuItem>
 			{#each data.footer as item (item.title)}
 				<Sidebar.MenuItem>
-					<Sidebar.MenuButton class="h-8">
+					<Sidebar.MenuButton class="h-8" isActive={isActive(item.href)}>
 						{#snippet child({ props })}
-							<a href={item.href} {...props} onclick={closeMobileSidebar}>
+							<a
+								href={item.href}
+								{...props}
+								aria-current={isActive(item.href) ? 'page' : undefined}
+								onclick={closeMobileSidebar}
+							>
 								<item.icon class="size-4" />
 								<span class="text-sm">{item.title}</span>
 							</a>

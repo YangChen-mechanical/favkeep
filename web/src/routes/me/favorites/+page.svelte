@@ -33,7 +33,10 @@
 	}
 
 	onMount(async () => {
-		setBreadcrumb([{ label: '我创建的收藏夹' }]);
+		setBreadcrumb([
+			{ label: 'B站', href: '/platforms/bilibili?view=sources' },
+			{ label: '我创建的收藏夹' }
+		]);
 
 		await loadFavorites();
 	});
@@ -42,6 +45,10 @@
 <svelte:head>
 	<title>我创建的收藏夹 - Bili Sync</title>
 </svelte:head>
+
+<a class="mb-4 inline-block text-sm underline" href="/platforms/bilibili?view=sources"
+	>返回 B站收藏来源</a
+>
 
 <div>
 	<div class="mb-6 flex items-center justify-between">

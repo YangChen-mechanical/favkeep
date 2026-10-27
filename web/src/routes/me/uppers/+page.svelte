@@ -49,7 +49,10 @@
 	}
 
 	onMount(async () => {
-		setBreadcrumb([{ label: '我关注的 UP 主' }]);
+		setBreadcrumb([
+			{ label: 'B站', href: '/platforms/bilibili?view=sources' },
+			{ label: '我关注的 UP 主' }
+		]);
 		await loadUppers();
 	});
 
@@ -59,6 +62,10 @@
 <svelte:head>
 	<title>我关注的 UP 主 - Bili Sync</title>
 </svelte:head>
+
+<a class="mb-4 inline-block text-sm underline" href="/platforms/bilibili?view=sources"
+	>返回 B站收藏来源</a
+>
 
 <div>
 	<div class="mb-4 flex items-center justify-between">

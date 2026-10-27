@@ -167,7 +167,9 @@
 						: '视频保存完成后，会带着封面出现在这里。'}
 				</p>
 				{#if query || state || platform}<Button variant="outline" href="/watch">清除筛选</Button
-					>{:else}<Button variant="outline" href="/video-sources">管理收藏来源</Button>{/if}
+					>{:else}<Button variant="outline" href="/platforms/bilibili?view=sources"
+						>管理收藏来源</Button
+					>{/if}
 			</div>{/if}
 	</section>
 </div>
