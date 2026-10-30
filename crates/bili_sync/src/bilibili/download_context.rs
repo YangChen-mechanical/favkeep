@@ -1,6 +1,6 @@
 use sea_orm::DatabaseConnection;
 
-use crate::adapter::VideoSourceEnum;
+use crate::bilibili::sources::VideoSourceEnum;
 use crate::bilibili::{BiliClient, FilterOption};
 use crate::config::Config;
 use crate::downloader::Downloader;

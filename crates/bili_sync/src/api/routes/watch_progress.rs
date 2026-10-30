@@ -39,7 +39,7 @@ async fn continue_watching(
                 ROW_NUMBER() OVER (PARTITION BY v.id ORDER BY w.updated_at DESC, p.id DESC) AS rank
          FROM watch_progress w JOIN page p ON p.id=w.page_id JOIN video v ON v.id=p.video_id
          WHERE w.completed=FALSE AND w.position_ms>0 AND p.path IS NOT NULL
-           AND ((p.download_status >> 3) & 7)=7 AND lower(p.path) LIKE '%.mp4')
+           AND p.id IN (SELECT id FROM playable_page))
          WHERE rank=1 ORDER BY updated_at DESC, page_id DESC LIMIT 12",
     );
     let items = ContinueWatchingItem::find_by_statement(statement)
@@ -93,6 +93,12 @@ async fn save_progress(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    if !crate::media::page_ready(db, id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let next_revision = update.revision.checked_add(1).ok_or(StatusCode::BAD_REQUEST)?;
     if update.revision < 0 || update.position_ms < 0 || update.position_ms > i64::from(page.duration) * 1000 {
         return Err(StatusCode::BAD_REQUEST);
@@ -146,6 +152,24 @@ mod tests {
         .insert(&db)
         .await
         .unwrap();
+        let video = bili_sync_entity::video::Model {
+            id: 1,
+            name: "Sample video".into(),
+            ..Default::default()
+        };
+        bili_sync_entity::video::ActiveModel::from(video)
+            .insert(&db)
+            .await
+            .unwrap();
+        page::ActiveModel {
+            id: sea_orm::Unchanged(1),
+            path: Set(Some("sample.mp4".into())),
+            download_status: Set(crate::utils::status::STATUS_OK << 3),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .unwrap();
         let update = |position_ms, revision| ProgressUpdate {
             position_ms,
             completed: false,
@@ -174,24 +198,6 @@ mod tests {
         );
         assert_eq!(save_progress(&db, 999, update(0, 0)).await, Err(StatusCode::NOT_FOUND));
 
-        let video = bili_sync_entity::video::Model {
-            id: 1,
-            name: "Sample video".into(),
-            ..Default::default()
-        };
-        bili_sync_entity::video::ActiveModel::from(video)
-            .insert(&db)
-            .await
-            .unwrap();
-        page::ActiveModel {
-            id: sea_orm::Unchanged(1),
-            path: Set(Some("sample.mp4".into())),
-            download_status: Set(crate::utils::status::STATUS_OK << 3),
-            ..Default::default()
-        }
-        .update(&db)
-        .await
-        .unwrap();
         let response = continue_watching(Extension(db.clone())).await.unwrap();
         let data = serde_json::to_value(response).unwrap();
         assert_eq!(data["data"].as_array().unwrap().len(), 1);

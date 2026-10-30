@@ -7,8 +7,8 @@ use sea_orm::entity::prelude::*;
 use sea_orm::sea_query::{Expr, OnConflict, SimpleExpr};
 use sea_orm::{ConnectionTrait, DatabaseTransaction, IdenStatic, Statement};
 
-use crate::adapter::{VideoSource, VideoSourceEnum};
 use crate::bilibili::VideoInfo;
+use crate::bilibili::sources::{VideoSource, VideoSourceEnum};
 use crate::config::Config;
 use crate::utils::status::STATUS_COMPLETED;
 

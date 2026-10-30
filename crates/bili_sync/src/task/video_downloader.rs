@@ -8,12 +8,12 @@ use serde::Serialize;
 use tokio::sync::{OnceCell, watch};
 use tokio_cron_scheduler::{Job, JobScheduler};
 
-use crate::adapter::VideoSource;
+use crate::bilibili::sources::VideoSource;
+use crate::bilibili::sync::process_video_source;
 use crate::bilibili::{self, BiliClient, BiliError};
 use crate::config::{ARGS, Config, TEMPLATE, Trigger, VersionedConfig};
 use crate::utils::model::get_enabled_video_sources;
 use crate::utils::notify::error_and_notify;
-use crate::workflow::process_video_source;
 
 static INSTANCE: OnceCell<DownloadTaskManager> = OnceCell::const_new();
 
@@ -101,9 +101,7 @@ impl DownloadTaskManager {
             let cx = cx.clone();
             Box::pin(async move {
                 let config = VersionedConfig::get().snapshot();
-                if let Err(error) = crate::douyin::runtime::run(&cx.connection, &config).await {
-                    warn!("抖音本轮已停止：{}", error);
-                }
+                let _ = crate::douyin::runtime::run(&cx.connection, &config).await;
                 if let Some(id) = *cx.douyin_task_id.lock().await {
                     let next = scheduler
                         .next_tick_for_job(id)
@@ -212,7 +210,7 @@ impl DownloadTaskManager {
         };
         *cx.video_task_id.lock().await = video_task_id;
         if let Err(error) = Self::schedule_douyin(&sched, cx.clone(), initial_config.douyin.interval).await {
-            warn!("抖音调度初始化失败：{}", error);
+            error!("[抖音] 调度初始化失败：{}", error);
         }
         // 发起一个一次性的任务，更新一下下次运行的时间
         if let Some(video_task_id) = video_task_id {
@@ -230,74 +228,84 @@ impl DownloadTaskManager {
         let sched_clone = sched.clone();
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(Ok(()));
         tokio::spawn(async move {
-            let update_task_result = async {
-                let mut previous = initial_config.clone();
-                while rx.changed().await.is_ok() {
-                    let new_config = rx.borrow().clone();
-                    let cx = cx_clone.clone();
-                    if previous.douyin.interval != new_config.douyin.interval
-                        && let Err(error) =
-                            Self::schedule_douyin(&sched_clone, cx.clone(), new_config.douyin.interval).await
-                    {
-                        warn!("抖音调度更新失败：{}", error);
-                    }
-                    let bili_interval_changed = previous.interval != new_config.interval;
-                    previous = new_config.clone();
-                    if !bili_interval_changed {
-                        continue;
-                    }
-                    let mut video_task_id = cx.video_task_id.lock().await;
-                    if let Some(old_video_task_id) = *video_task_id {
-                        // 这里必须成功，不然后面会重复添加任务
-                        sched_clone
-                            .lock()
-                            .await
-                            .remove(&old_video_task_id)
-                            .await
-                            .context("移除旧的视频下载任务失败")?;
-                    }
-                    let new_video_task_id = async {
-                        let job_run = DownloadTaskManager::download_video_task(cx.clone());
-                        let job = match &new_config.interval {
-                            Trigger::Interval(interval) => {
-                                Job::new_repeated_async(Duration::from_secs(*interval), job_run)?
-                            }
-                            Trigger::Cron(cron) => Job::new_async_tz(cron, chrono::Local, job_run)?,
-                        };
-                        Result::<_, anyhow::Error>::Ok(sched_clone.lock().await.add(job).await?)
-                    }
-                    .await;
-                    let new_video_task_id = match new_video_task_id {
-                        Ok(id) => Some(id),
-                        Err(err) => {
-                            error_and_notify(
-                                &initial_config,
-                                &cx.bili_client,
-                                format!("重载视频下载任务失败：{:#}", err),
-                                &err,
-                            );
-                            None
-                        }
-                    };
-                    *video_task_id = new_video_task_id;
-                    if let Some(video_task_id) = new_video_task_id {
-                        sched_clone
-                            .lock()
-                            .await
-                            .add(Job::new_one_shot_async(
-                                Duration::from_secs(0),
-                                DownloadTaskManager::refresh_next_run(video_task_id, cx.clone()),
-                            )?)
-                            .await?;
-                    }
-                }
-                Result::<(), anyhow::Error>::Ok(())
-            }
-            .await;
+            let update_task_result = Self::watch_config(rx, initial_config, cx_clone, sched_clone).await;
             // 如果执行正常，上面应该是永远不会退出的
             let _ = shutdown_tx.send(update_task_result);
         });
         Ok(Self { sched, cx, shutdown_rx })
+    }
+
+    async fn watch_config(
+        mut rx: watch::Receiver<Arc<Config>>,
+        initial_config: Arc<Config>,
+        cx_clone: Arc<TaskContext>,
+        sched_clone: Arc<tokio::sync::Mutex<JobScheduler>>,
+    ) -> Result<()> {
+        let mut previous = (*initial_config).clone();
+        while rx.changed().await.is_ok() {
+            let new_config = rx.borrow().clone();
+            let cx = cx_clone.clone();
+            let mut douyin_interval = new_config.douyin.interval;
+            if previous.douyin.interval != new_config.douyin.interval
+                && let Err(error) = Self::schedule_douyin(&sched_clone, cx.clone(), new_config.douyin.interval).await
+            {
+                error!("[抖音] 调度更新失败：{}", error);
+                douyin_interval = previous.douyin.interval;
+            }
+            let previous_bili_interval = previous.interval.clone();
+            let bili_interval_changed = previous.interval != new_config.interval;
+            previous = (*new_config).clone();
+            previous.douyin.interval = douyin_interval;
+            if !bili_interval_changed {
+                continue;
+            }
+            let mut video_task_id = cx.video_task_id.lock().await;
+            if let Some(old_video_task_id) = *video_task_id {
+                if let Err(error) = sched_clone.lock().await.remove(&old_video_task_id).await {
+                    error!("B站调度更新失败，保留原任务：{error}");
+                    previous.interval = previous_bili_interval;
+                    continue;
+                }
+                *video_task_id = None;
+            }
+            let new_video_task_id = async {
+                let job_run = DownloadTaskManager::download_video_task(cx.clone());
+                let job = match &new_config.interval {
+                    Trigger::Interval(interval) => Job::new_repeated_async(Duration::from_secs(*interval), job_run)?,
+                    Trigger::Cron(cron) => Job::new_async_tz(cron, chrono::Local, job_run)?,
+                };
+                Result::<_, anyhow::Error>::Ok(sched_clone.lock().await.add(job).await?)
+            }
+            .await;
+            let new_video_task_id = match new_video_task_id {
+                Ok(id) => Some(id),
+                Err(err) => {
+                    error_and_notify(
+                        &initial_config,
+                        &cx.bili_client,
+                        format!("重载视频下载任务失败：{:#}", err),
+                        &err,
+                    );
+                    previous.interval = previous_bili_interval;
+                    None
+                }
+            };
+            *video_task_id = new_video_task_id;
+            if let Some(video_task_id) = new_video_task_id {
+                match Job::new_one_shot_async(
+                    Duration::ZERO,
+                    DownloadTaskManager::refresh_next_run(video_task_id, cx.clone()),
+                ) {
+                    Ok(job) => {
+                        if let Err(error) = sched_clone.lock().await.add(job).await {
+                            warn!("B站下次运行时间刷新失败：{error}");
+                        }
+                    }
+                    Err(error) => warn!("B站下次运行时间刷新失败：{error}"),
+                }
+            }
+        }
+        Result::<(), anyhow::Error>::Ok(())
     }
 
     fn check_and_refresh_credential_task(
@@ -455,4 +463,68 @@ async fn download_video(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn failed_bili_schedule_does_not_stop_douyin_or_later_config_updates() {
+        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+        let (status_tx, status_rx) = watch::channel(TaskStatus::default());
+        let cx = Arc::new(TaskContext {
+            connection: db,
+            bili_client: Arc::new(BiliClient::new()),
+            running: tokio::sync::Mutex::new(()),
+            status_tx,
+            status_rx,
+            video_task_id: tokio::sync::Mutex::new(None),
+            douyin_task_id: tokio::sync::Mutex::new(None),
+        });
+        let scheduler = Arc::new(tokio::sync::Mutex::new(JobScheduler::new().await.unwrap()));
+        let initial = Arc::new(Config::default());
+        let (tx, rx) = watch::channel(initial.clone());
+        let worker = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(DownloadTaskManager::watch_config(
+            rx,
+            initial.clone(),
+            cx.clone(),
+            scheduler.clone(),
+        )));
+        let mut invalid = (*initial).clone();
+        invalid.interval = Trigger::Cron("invalid cron".into());
+        invalid.douyin.interval += 1;
+        tx.send(Arc::new(invalid)).unwrap();
+        let first = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if let Some(id) = *cx.douyin_task_id.lock().await {
+                    break id;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(scheduler.lock().await.next_tick_for_job(first).await.unwrap().is_some());
+        assert!(!worker.is_finished());
+        let mut valid = (*initial).clone();
+        valid.interval = Trigger::Interval(1201);
+        valid.douyin.interval += 2;
+        tx.send(Arc::new(valid)).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if cx.video_task_id.lock().await.is_some()
+                    && cx.douyin_task_id.lock().await.is_some_and(|id| id != first)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!worker.is_finished());
+        worker.abort();
+        scheduler.lock().await.shutdown().await.unwrap();
+    }
 }

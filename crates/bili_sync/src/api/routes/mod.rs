@@ -19,6 +19,10 @@ pub fn router() -> Router {
     Router::new().nest(
         "/api",
         config::router()
+            .route(
+                "/platforms",
+                axum::routing::get(|| async { crate::api::wrapper::ApiResponse::ok(crate::platform::platforms()) }),
+            )
             .merge(douyin::router())
             .merge(me::router())
             .merge(login::router())

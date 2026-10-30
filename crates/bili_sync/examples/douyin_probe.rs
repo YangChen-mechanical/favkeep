@@ -6,6 +6,9 @@ mod client;
 #[path = "../src/douyin/core.rs"]
 #[allow(dead_code)]
 mod core;
+#[path = "../src/resources.rs"]
+#[allow(dead_code)]
+mod resources;
 #[path = "../src/douyin/sign.rs"]
 mod sign;
 

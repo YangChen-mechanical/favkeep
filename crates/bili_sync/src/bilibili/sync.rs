@@ -13,14 +13,14 @@ use sea_orm::sea_query::{Alias, ExprTrait, Func};
 use sea_orm::{IntoSimpleExpr, TransactionTrait};
 use tokio::fs;
 
-use crate::adapter::{VideoSource, VideoSourceEnum};
+use crate::bilibili::download_context::DownloadContext;
+use crate::bilibili::sources::{VideoSource, VideoSourceEnum};
 use crate::bilibili::{BestStream, BiliClient, BiliError, Dimension, PageInfo, Video, VideoInfo};
 use crate::config::{ARGS, Config, PathSafeTemplate};
 use crate::downloader::Downloader;
 use crate::error::ExecutionStatus;
 use crate::notifier::DownloadNotifyInfo;
 use crate::utils::danmaku_schedule::should_sync_danmaku;
-use crate::utils::download_context::DownloadContext;
 use crate::utils::format_arg::{page_format_args, video_format_args};
 use crate::utils::model::{
     create_pages, create_videos, filter_unfilled_videos, filter_unhandled_video_pages, set_video_models_invalid,

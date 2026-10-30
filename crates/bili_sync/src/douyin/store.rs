@@ -40,6 +40,16 @@ pub struct Pending {
     pub platform_id: String,
 }
 
+#[derive(Debug, Default)]
+pub struct ScanSummary {
+    pub baseline: bool,
+    pub scanned: usize,
+    pub historical: usize,
+    pub existing: usize,
+    pub unsupported: usize,
+    pub inserted: usize,
+}
+
 pub enum Outcome {
     Succeeded {
         path: String,
@@ -232,7 +242,7 @@ pub async fn commit_scan(
     folder_id: &str,
     revision: i64,
     items: &[Item],
-) -> Result<usize, DbErr> {
+) -> Result<ScanSummary, DbErr> {
     check_id(identity)?;
     check_id(folder_id)?;
     let mut ids = HashSet::new();
@@ -263,16 +273,26 @@ pub async fn commit_scan(
         vec![identity.into(), folder_id.into()],
     ))
     .await?;
-    let mut inserted = 0;
+    let mut summary = ScanSummary {
+        baseline: !folder.baseline_done,
+        scanned: items.len(),
+        ..Default::default()
+    };
     for item in items {
         let seen = txn
             .query_one(statement(
-                "SELECT 1 FROM douyin_folder_item WHERE identity=? AND folder_id=? AND platform_id=?",
+                "SELECT qualified FROM douyin_folder_item WHERE identity=? AND folder_id=? AND platform_id=?",
                 vec![identity.into(), folder_id.into(), item.id.clone().into()],
             ))
-            .await?
-            .is_some();
-        let qualified = folder.baseline_done && !seen && item.kind == "video";
+            .await?;
+        let qualified = folder.baseline_done && seen.is_none() && item.kind == "video";
+        let historical = !folder.baseline_done
+            || seen
+                .as_ref()
+                .map(|row| row.try_get::<bool>("", "qualified"))
+                .transpose()?
+                .is_some_and(|q| !q);
+        let mut inserted = false;
         if qualified {
             let video = txn.execute(statement("INSERT INTO video(platform,platform_id,upper_name,upper_face,name,path,category,intro,cover,ctime,pubtime,favtime,download_status,valid,should_download,single_page) VALUES ('douyin',?,'','',?,'',0,'','',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,0,1,1,1) ON CONFLICT(platform,platform_id) WHERE platform='douyin' DO NOTHING", vec![item.id.clone().into(),item.id.clone().into()])).await?;
             if video.rows_affected() == 1 {
@@ -281,22 +301,27 @@ pub async fn commit_scan(
                     vec![
                         (video.last_insert_id() as i64).into(),
                         item.id.clone().into(),
-                        i64::from(initial_page_status()).into(),
+                        0i64.into(),
                     ],
                 ))
                 .await?;
-                inserted += 1;
+                txn.execute(statement("INSERT INTO douyin_download(page_id,state,failures) SELECT id,'waiting',0 FROM page WHERE video_id=?", vec![(video.last_insert_id() as i64).into()])).await?;
+                summary.inserted += 1;
+                inserted = true;
             }
+        }
+        if item.kind != "video" {
+            summary.unsupported += 1;
+        } else if historical {
+            summary.historical += 1;
+        } else if !inserted {
+            summary.existing += 1;
         }
         txn.execute(statement("INSERT INTO douyin_folder_item(identity,folder_id,platform_id,kind,qualified) VALUES (?,?,?,?,?) ON CONFLICT(identity,folder_id,platform_id) DO UPDATE SET present=1,kind=excluded.kind", vec![identity.into(),folder_id.into(),item.id.clone().into(),item.kind.clone().into(),qualified.into()])).await?;
     }
     txn.execute(statement("UPDATE douyin_folder SET baseline_done=1,baseline_at=coalesce(baseline_at,?),last_result='complete',item_count=? WHERE identity=? AND id=?", vec![now().into(),(items.len() as i64).into(),identity.into(),folder_id.into()])).await?;
     txn.commit().await?;
-    Ok(inserted)
-}
-
-fn initial_page_status() -> u32 {
-    7 | (7 << 6) | (7 << 9) | (7 << 12)
+    Ok(summary)
 }
 
 pub async fn folder_error(db: &DatabaseConnection, identity: &str, folder_id: &str, error: &str) -> Result<(), DbErr> {
@@ -329,11 +354,11 @@ pub async fn folder_error(db: &DatabaseConnection, identity: &str, folder_id: &s
     Ok(())
 }
 
-const ELIGIBLE_SQL: &str = "SELECT DISTINCT v.id,v.platform_id FROM video v JOIN page p ON p.video_id=v.id JOIN douyin_folder_item i ON i.platform_id=v.platform_id JOIN douyin_folder f ON f.identity=i.identity AND f.id=i.folder_id JOIN douyin_account a ON a.identity=f.identity WHERE v.platform='douyin' AND v.valid=1 AND v.should_download=1 AND p.pid=1 AND i.kind='video' AND i.present=1 AND i.qualified=1 AND f.identity=? AND f.selected=1 AND f.available=1 AND a.paused_reason IS NULL";
+const ELIGIBLE_SQL: &str = "SELECT DISTINCT v.id,v.platform_id FROM video v JOIN page p ON p.video_id=v.id JOIN douyin_download d ON d.page_id=p.id JOIN douyin_folder_item i ON i.platform_id=v.platform_id JOIN douyin_folder f ON f.identity=i.identity AND f.id=i.folder_id JOIN douyin_account a ON a.identity=f.identity WHERE v.platform='douyin' AND v.valid=1 AND v.should_download=1 AND p.pid=1 AND i.kind='video' AND i.present=1 AND i.qualified=1 AND f.identity=? AND f.selected=1 AND f.available=1 AND a.paused_reason IS NULL AND (a.next_allowed_at IS NULL OR a.next_allowed_at<=CAST(strftime('%s','now') AS INTEGER))";
 
 pub async fn pending(db: &DatabaseConnection, identity: &str) -> Result<Vec<Pending>, DbErr> {
     db.query_all(statement(
-        &format!("{ELIGIBLE_SQL} AND ((p.download_status>>3)&7)<4 ORDER BY v.id"),
+        &format!("{ELIGIBLE_SQL} AND d.state!='succeeded' AND d.failures<4 ORDER BY v.id"),
         vec![identity.into()],
     ))
     .await?
@@ -350,43 +375,44 @@ pub async fn pending(db: &DatabaseConnection, identity: &str) -> Result<Vec<Pend
 pub async fn is_pending(db: &DatabaseConnection, identity: &str, video_id: i32) -> Result<bool, DbErr> {
     Ok(db
         .query_one(statement(
-            &format!("{ELIGIBLE_SQL} AND ((p.download_status>>3)&7)<4 AND v.id=? LIMIT 1"),
+            &format!("{ELIGIBLE_SQL} AND d.state!='succeeded' AND d.failures<4 AND v.id=? LIMIT 1"),
             vec![identity.into(), video_id.into()],
         ))
         .await?
         .is_some())
 }
 
-pub async fn retry_failed(db: &DatabaseConnection, identity: &str) -> Result<usize, DbErr> {
+pub async fn can_retry(db: &DatabaseConnection, video_id: i32) -> Result<bool, DbErr> {
+    let Some(identity) = bound_identity(db).await? else {
+        return Ok(false);
+    };
+    Ok(db
+        .query_one(statement(
+            &format!("{ELIGIBLE_SQL} AND d.state='failed' AND v.id=?"),
+            vec![identity.into(), video_id.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+pub async fn retry_failed(db: &DatabaseConnection, identity: &str, video_id: Option<i32>) -> Result<usize, DbErr> {
     check_id(identity)?;
     let txn = db.begin().await?;
     let account=txn.execute(statement("UPDATE douyin_account SET identity=identity WHERE identity=? AND paused_reason IS NULL AND (next_allowed_at IS NULL OR next_allowed_at<=?)",vec![identity.into(),now().into()])).await?;
     if account.rows_affected() != 1 {
         return Err(DbErr::Custom("douyin_account_blocked".into()));
     }
-    let rows = txn
-        .query_all(statement(
-            &format!("{ELIGIBLE_SQL} AND ((p.download_status>>3)&7) BETWEEN 1 AND 4"),
-            vec![identity.into()],
-        ))
-        .await?;
-    let page_mask = i64::from(!((1u32 << 31) | (7 << 3)));
-    let video_mask = i64::from(!((1u32 << 31) | (7 << 12)));
+    let mut sql = format!("{ELIGIBLE_SQL} AND d.state='failed'");
+    let mut values = vec![identity.into()];
+    if let Some(id) = video_id {
+        sql.push_str(" AND v.id=?");
+        values.push(id.into());
+    }
+    let rows = txn.query_all(statement(&sql, values)).await?;
     let mut count = 0;
     for row in rows {
         let id: i32 = row.try_get("", "id")?;
-        count += txn
-            .execute(statement(
-                "UPDATE page SET download_status=download_status&? WHERE video_id=? AND pid=1",
-                vec![page_mask.into(), id.into()],
-            ))
-            .await?
-            .rows_affected() as usize;
-        txn.execute(statement(
-            "UPDATE video SET download_status=download_status&? WHERE id=?",
-            vec![video_mask.into(), id.into()],
-        ))
-        .await?;
+        count += txn.execute(statement("UPDATE douyin_download SET state='waiting',failures=0 WHERE page_id IN (SELECT id FROM page WHERE video_id=?)",vec![id.into()])).await?.rows_affected() as usize;
     }
     txn.commit().await?;
     Ok(count)
@@ -405,15 +431,15 @@ pub async fn mark_outcome(db: &DatabaseConnection, video_id: i32, outcome: Outco
     }
     let row = txn
         .query_one(statement(
-            "SELECT p.id,p.download_status FROM page p WHERE p.video_id=? AND p.pid=1",
+            "SELECT p.id,d.state,d.failures FROM page p JOIN douyin_download d ON d.page_id=p.id WHERE p.video_id=? AND p.pid=1",
             vec![video_id.into()],
         ))
         .await?
         .ok_or_else(invalid)?;
     let page_id: i32 = row.try_get("", "id")?;
-    let old_status: u32 = row.try_get("", "download_status")?;
-    let state = (old_status >> 3) & 7;
-    if state >= 4 {
+    let state: String = row.try_get("", "state")?;
+    let failures: u32 = row.try_get("", "failures")?;
+    if state == "succeeded" || failures >= 4 {
         txn.commit().await?;
         return Ok(());
     }
@@ -435,48 +461,39 @@ pub async fn mark_outcome(db: &DatabaseConnection, video_id: i32, outcome: Outco
                 .and_then(std::path::Path::to_str)
                 .ok_or_else(invalid)?
                 .to_owned();
-            let complete = i64::from((1u32 << 31) | 0x7fff);
+
             txn.execute(statement(
-                "UPDATE page SET path=?,name=coalesce(nullif(?,''),name),duration=?,width=?,height=?,download_status=? WHERE id=?",
+                "UPDATE page SET path=?,name=coalesce(nullif(?,''),name),duration=?,width=?,height=? WHERE id=?",
                 vec![
                     path.clone().into(),
                     title.clone().into(),
                     duration.into(),
                     width.into(),
                     height.into(),
-                    complete.into(),
                     page_id.into(),
                 ],
             ))
             .await?;
             txn.execute(statement(
-                "UPDATE video SET path=?,name=coalesce(nullif(?,''),name),upper_name=coalesce(nullif(?,''),upper_name),download_status=? WHERE id=?",
+                "UPDATE video SET path=?,name=coalesce(nullif(?,''),name),upper_name=coalesce(nullif(?,''),upper_name) WHERE id=?",
                 vec![
                     directory.into(),
                     title.into(),
                     author.into(),
-                    complete.into(),
                     video_id.into(),
                 ],
             ))
             .await?;
-        }
-        Outcome::Failed => {
-            let failures = state + 1;
-            let status = initial_page_status() | (failures << 3) | if failures >= 4 { 1u32 << 31 } else { 0 };
             txn.execute(statement(
-                "UPDATE page SET download_status=? WHERE id=?",
-                vec![i64::from(status).into(), page_id.into()],
+                "UPDATE douyin_download SET state='succeeded',failures=0 WHERE page_id=?",
+                vec![page_id.into()],
             ))
             .await?;
-            let video_status = if failures >= 4 {
-                (1u32 << 31) | 0xfff | (4 << 12)
-            } else {
-                0
-            };
+        }
+        Outcome::Failed => {
             txn.execute(statement(
-                "UPDATE video SET download_status=? WHERE id=?",
-                vec![i64::from(video_status).into(), video_id.into()],
+                "UPDATE douyin_download SET state='failed',failures=failures+1 WHERE page_id=?",
+                vec![page_id.into()],
             ))
             .await?;
         }
@@ -585,6 +602,18 @@ mod tests {
             .unwrap()
     }
 
+    async fn download_state(db: &DatabaseConnection, video_id: i32) -> (String, u32) {
+        let row = db
+            .query_one(statement(
+                "SELECT d.state,d.failures FROM douyin_download d JOIN page p ON p.id=d.page_id WHERE p.video_id=?",
+                vec![video_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        (row.try_get("", "state").unwrap(), row.try_get("", "failures").unwrap())
+    }
+
     #[tokio::test]
     async fn migration_preserves_old_ids_paths_watch_progress_and_bili_uniqueness() {
         let db = Database::connect("sqlite::memory:").await.unwrap();
@@ -663,9 +692,83 @@ mod tests {
         assert_eq!(pending(&db, "self_123").await.unwrap().len(), 1);
         set_selected(&db, "self_123", "f1", false).await.unwrap();
         assert!(pending(&db, "self_123").await.unwrap().is_empty());
-        assert_eq!(retry_failed(&db, "self_123").await.unwrap(), 0);
+        assert_eq!(retry_failed(&db, "self_123", None).await.unwrap(), 0);
         set_selected(&db, "self_123", "f1", true).await.unwrap();
         assert_eq!(pending(&db, "self_123").await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn scan_counts_partition_history_existing_unsupported_and_cross_folder_duplicates() {
+        let db = database().await;
+        let first = set_selected(&db, "self_123", "f1", true).await.unwrap();
+        let second = set_selected(&db, "self_123", "f2", true).await.unwrap();
+        let items = || {
+            vec![
+                item("old"),
+                Item {
+                    id: "image".into(),
+                    kind: "unsupported".into(),
+                },
+            ]
+        };
+        let baseline = commit_scan(&db, "self_123", "f1", first.revision, &items())
+            .await
+            .unwrap();
+        assert!(baseline.baseline);
+        assert_eq!(
+            (
+                baseline.scanned,
+                baseline.historical,
+                baseline.unsupported,
+                baseline.inserted
+            ),
+            (2, 1, 1, 0)
+        );
+        commit_scan(&db, "self_123", "f2", second.revision, &[]).await.unwrap();
+        let mut more = items();
+        more.push(item("new"));
+        let next = commit_scan(&db, "self_123", "f1", first.revision, &more).await.unwrap();
+        assert!(!next.baseline);
+        assert_eq!(
+            (next.scanned, next.historical, next.unsupported, next.inserted),
+            (3, 1, 1, 1)
+        );
+        let duplicate = commit_scan(&db, "self_123", "f2", second.revision, &[item("new")])
+            .await
+            .unwrap();
+        assert_eq!((duplicate.scanned, duplicate.existing, duplicate.inserted), (1, 1, 0));
+        let repeated = commit_scan(&db, "self_123", "f1", first.revision, &more).await.unwrap();
+        assert_eq!(
+            (
+                repeated.historical,
+                repeated.existing,
+                repeated.unsupported,
+                repeated.inserted
+            ),
+            (1, 1, 1, 0)
+        );
+        assert_eq!(pending(&db, "self_123").await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_transaction_publishes_no_scan_counts_or_video_rows() {
+        let db = database().await;
+        let folder = set_selected(&db, "self_123", "f1", true).await.unwrap();
+        commit_scan(&db, "self_123", "f1", folder.revision, &[]).await.unwrap();
+        db.execute(statement("CREATE TRIGGER fail_scan BEFORE INSERT ON douyin_folder_item WHEN NEW.platform_id='rollback' BEGIN SELECT RAISE(ABORT,'fixture'); END", vec![])).await.unwrap();
+        assert!(
+            commit_scan(&db, "self_123", "f1", folder.revision, &[item("ok"), item("rollback")])
+                .await
+                .is_err()
+        );
+        assert!(pending(&db, "self_123").await.unwrap().is_empty());
+        assert_eq!(folders(&db, "self_123").await.unwrap()[0].item_count, 0);
+        assert!(
+            db.query_all(statement("SELECT id FROM video WHERE platform='douyin'", vec![]))
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -675,14 +778,16 @@ mod tests {
         assert_eq!(
             commit_scan(&db, "self_123", "f1", first.revision, &[item("old")])
                 .await
-                .unwrap(),
+                .unwrap()
+                .inserted,
             0
         );
         assert!(pending(&db, "self_123").await.unwrap().is_empty());
         assert_eq!(
             commit_scan(&db, "self_123", "f1", first.revision, &[item("old"), item("new")])
                 .await
-                .unwrap(),
+                .unwrap()
+                .inserted,
             1
         );
         assert_eq!(pending(&db, "self_123").await.unwrap().len(), 1);
@@ -696,7 +801,8 @@ mod tests {
                 &[item("new"), item("historical")]
             )
             .await
-            .unwrap(),
+            .unwrap()
+            .inserted,
             0
         );
         commit_scan(&db, "self_123", "f1", first.revision, &[item("old")])
@@ -706,7 +812,8 @@ mod tests {
         assert_eq!(
             commit_scan(&db, "self_123", "f1", first.revision, &[item("old"), item("new")])
                 .await
-                .unwrap(),
+                .unwrap()
+                .inserted,
             0
         );
         let queued = pending(&db, "self_123").await.unwrap();
@@ -751,7 +858,8 @@ mod tests {
         assert_eq!(
             commit_scan(&db, "self_123", "f1", first.revision, &[item("historical_in_second")])
                 .await
-                .unwrap(),
+                .unwrap()
+                .inserted,
             1
         );
         assert_eq!(pending(&db, "self_123").await.unwrap().len(), 1);
@@ -764,7 +872,8 @@ mod tests {
                 &[item("historical_in_second"), item("new_in_both")]
             )
             .await
-            .unwrap(),
+            .unwrap()
+            .inserted,
             1
         );
         assert_eq!(
@@ -776,7 +885,8 @@ mod tests {
                 &[item("historical_in_second"), item("new_in_both")]
             )
             .await
-            .unwrap(),
+            .unwrap()
+            .inserted,
             0
         );
         assert_eq!(pending(&db, "self_123").await.unwrap().len(), 2);
@@ -813,7 +923,8 @@ mod tests {
         assert_eq!(
             commit_scan(&db, "self_123", "f1", folder.revision, &[unsupported, item("x")])
                 .await
-                .unwrap(),
+                .unwrap()
+                .inserted,
             1
         );
         sync_folders(&db, "self_123", &[]).await.unwrap();
@@ -826,7 +937,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn media_success_and_four_failures_use_existing_status_bits() {
+    async fn media_success_and_four_failures_use_independent_download_state() {
         let db = database().await;
         let folder = set_selected(&db, "self_123", "f1", true).await.unwrap();
         commit_scan(&db, "self_123", "f1", folder.revision, &[]).await.unwrap();
@@ -854,7 +965,7 @@ mod tests {
         .await
         .unwrap();
         let saved = saved_page(&db, good.id).await;
-        assert_eq!((saved.download_status >> 3) & 7, 7);
+        assert_eq!(download_state(&db, good.id).await, ("succeeded".into(), 0));
         assert_eq!(saved.path.as_deref(), Some(output.as_str()));
         assert!(!is_pending(&db, "self_123", good.id).await.unwrap());
         let video = bili_sync_entity::video::Entity::find_by_id(good.id)
@@ -867,8 +978,8 @@ mod tests {
         assert!(tokio::fs::canonicalize(&video.path).await.unwrap().is_dir());
         assert!(tokio::fs::canonicalize(&output).await.unwrap().is_file());
         db.execute(statement(
-            "UPDATE page SET download_status=? WHERE video_id=?",
-            vec![i64::from(initial_page_status()).into(), good.id.into()],
+            "UPDATE douyin_download SET state='waiting',failures=0 WHERE page_id IN (SELECT id FROM page WHERE video_id=?)",
+            vec![good.id.into()],
         ))
         .await
         .unwrap();
@@ -904,8 +1015,8 @@ mod tests {
         mark_outcome(&db, bad.id, Outcome::Failed).await.unwrap();
         assert!(pending(&db, "self_123").await.unwrap().is_empty());
         let failed = saved_page(&db, bad.id).await;
-        assert_eq!((failed.download_status >> 3) & 7, 4);
-        assert_eq!(failed.download_status >> 31, 1);
+        assert_eq!(download_state(&db, bad.id).await, ("failed".into(), 4));
+        assert_eq!(failed.download_status, 0);
         mark_outcome(&db, good.id, Outcome::Failed).await.unwrap();
         assert_eq!(saved_page(&db, good.id).await.download_status, saved.download_status);
     }
@@ -990,19 +1101,23 @@ mod tests {
         assert!(!is_pending(&db, "self_123", id("bad")).await.unwrap());
         let baseline = serde_json::to_value(folders(&db, "self_123").await.unwrap()).unwrap();
         let good_before = saved_page(&db, id("good")).await;
-        assert_eq!(retry_failed(&db, "self_123").await.unwrap(), 2);
+        assert!(can_retry(&db, id("bad")).await.unwrap());
+        assert!(!can_retry(&db, id("disabled")).await.unwrap());
+        assert_eq!(retry_failed(&db, "self_123", Some(id("bad"))).await.unwrap(), 1);
+        assert_eq!(download_state(&db, id("partial")).await.1, 1);
+        assert_eq!(retry_failed(&db, "self_123", None).await.unwrap(), 1);
         assert!(is_pending(&db, "self_123", id("bad")).await.unwrap());
         assert_eq!(pending(&db, "self_123").await.unwrap().len(), 2);
-        assert_eq!((saved_page(&db, id("bad")).await.download_status >> 3) & 7, 0);
-        assert_eq!((saved_page(&db, id("partial")).await.download_status >> 3) & 7, 0);
-        assert_eq!((saved_page(&db, id("disabled")).await.download_status >> 3) & 7, 4);
+        assert_eq!(download_state(&db, id("bad")).await.1, 0);
+        assert_eq!(download_state(&db, id("partial")).await.1, 0);
+        assert_eq!(download_state(&db, id("disabled")).await.1, 4);
         assert_eq!(saved_page(&db, id("good")).await, good_before);
         let parent = bili_sync_entity::video::Entity::find_by_id(id("bad"))
             .one(&db)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(parent.download_status, 0xfff);
+        assert_eq!(parent.download_status, 0);
         assert_eq!(
             serde_json::to_value(folders(&db, "self_123").await.unwrap()).unwrap(),
             baseline
@@ -1021,15 +1136,15 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            matches!(retry_failed(&db,"self_123").await,Err(DbErr::Custom(message)) if message=="douyin_account_blocked")
+            matches!(retry_failed(&db,"self_123", None).await,Err(DbErr::Custom(message)) if message=="douyin_account_blocked")
         );
-        assert_eq!((saved_page(&db, id("bad")).await.download_status >> 3) & 7, 1);
+        assert_eq!(download_state(&db, id("bad")).await.1, 1);
         resume_account(&db, "self_123").await.unwrap();
         account_outcome(&db, "self_123", AccountOutcome::DiskFull, 3600)
             .await
             .unwrap();
-        assert!(retry_failed(&db, "self_123").await.is_err());
-        assert_eq!((saved_page(&db, id("bad")).await.download_status >> 3) & 7, 1);
+        assert!(retry_failed(&db, "self_123", None).await.is_err());
+        assert_eq!(download_state(&db, id("bad")).await.1, 1);
     }
 
     #[tokio::test]
@@ -1063,7 +1178,8 @@ mod tests {
         assert_eq!(
             commit_scan(&db, "self_123", "f1", folder.revision, &[item("one"), item("two")])
                 .await
-                .unwrap(),
+                .unwrap()
+                .inserted,
             0
         );
         assert!(pending(&db, "self_123").await.unwrap().is_empty());

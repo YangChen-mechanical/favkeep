@@ -1,19 +1,20 @@
 #[macro_use]
 extern crate tracing;
 
-mod adapter;
 mod api;
 mod auth;
 mod bilibili;
 mod config;
 mod database;
-mod downloader;
 mod douyin;
+mod downloader;
 mod error;
+mod media;
 mod notifier;
+mod platform;
+mod resources;
 mod task;
 mod utils;
-mod workflow;
 
 use std::collections::VecDeque;
 use std::fmt::Debug;
@@ -126,7 +127,7 @@ async fn init() -> Result<(Arc<BiliClient>, DatabaseConnection, LogHelper)> {
         douyin::login::import_session(&connection, path)
             .await
             .context("抖音会话导入失败")?;
-        info!("同账号抖音会话已验证并导入，可启动服务后在网页验证并恢复任务");
+        info!("[抖音] 同账号会话已验证并导入，可启动服务后在网页验证并恢复任务");
         connection.close().await?;
         std::process::exit(0);
     }

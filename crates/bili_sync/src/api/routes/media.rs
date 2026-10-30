@@ -11,7 +11,6 @@ use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
 use crate::api::wrapper::ApiResponse;
-use crate::utils::status::{PageStatus, STATUS_OK};
 
 pub(super) fn router() -> Router {
     Router::new()
@@ -31,8 +30,10 @@ async fn stream_page(
     else {
         return Ok(ApiResponse::<()>::not_found("Media not found").into_response());
     };
-    let statuses: [u32; 5] = PageStatus::from(page.download_status).into();
-    if statuses[1] != STATUS_OK {
+    if !crate::media::page_ready(&db, page.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
         return Ok(ApiResponse::<()>::not_found("Media has not finished downloading").into_response());
     }
     let Some(path) = page.path else {

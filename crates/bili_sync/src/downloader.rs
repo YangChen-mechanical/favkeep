@@ -85,6 +85,7 @@ impl Downloader {
             self.multi_fetch_internal(audio_urls, true, concurrent_download)
         )?;
         let final_temp_file = TempFile::new().await?;
+        let _process = crate::resources::acquire(&crate::resources::MEDIA_PROCESSES, "媒体处理").await;
         let output = Command::new(ARGS.ffmpeg_path.as_deref().unwrap_or("ffmpeg"))
             .args([
                 "-i",
@@ -100,9 +101,11 @@ impl Downloader {
                 "-y",
                 final_temp_file.file_path().to_string_lossy().as_ref(),
             ])
+            .kill_on_drop(true)
             .output()
             .await
             .context("failed to run ffmpeg")?;
+        drop(_process);
         if !output.status.success() {
             bail!("ffmpeg error: {}", str::from_utf8(&output.stderr).unwrap_or("unknown"));
         }
@@ -162,6 +165,7 @@ impl Downloader {
     }
 
     async fn fetch_serial(&self, url: &str, file: &mut TempFile) -> Result<()> {
+        let _transfer = crate::resources::acquire(&crate::resources::TRANSFERS, "文件传输").await;
         let resp = self
             .client
             .request(Method::GET, url, None)
@@ -179,6 +183,7 @@ impl Downloader {
         concurrent_download: &ConcurrentDownloadLimit,
     ) -> Result<()> {
         let (concurrency, threshold) = (concurrent_download.concurrency, concurrent_download.threshold);
+        let probe = crate::resources::acquire(&crate::resources::TRANSFERS, "文件探测").await;
         let file_size = if is_stream {
             // B 站视频、音频流存在 HEAD 为 404 但 GET 正常的情况，此处假设支持分块，直接使用携带 Range 头的 GET 请求探测
             let resp = self
@@ -189,6 +194,8 @@ impl Downloader {
                 .await?
                 .error_for_status_ext()?;
             if resp.status() != StatusCode::PARTIAL_CONTENT {
+                drop(resp);
+                drop(probe);
                 return self.fetch_serial(url, file).await;
             }
             resp.header_file_size()
@@ -206,10 +213,13 @@ impl Downloader {
                 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Accept-Ranges#none
                 .is_none_or(|v| v.to_str().unwrap_or_default() == "none")
             {
+                drop(resp);
+                drop(probe);
                 return self.fetch_serial(url, file).await;
             }
             resp.header_content_length()
         };
+        drop(probe);
         let Some(file_size) = file_size else {
             return self.fetch_serial(url, file).await;
         };
@@ -230,6 +240,7 @@ impl Downloader {
             let (url_clone, client_clone) = (url.clone(), self.client.clone());
             let mut file_clone = file.open_rw().await?;
             tasks.spawn(async move {
+                let _transfer = crate::resources::acquire(&crate::resources::TRANSFERS, "分块传输").await;
                 file_clone.seek(SeekFrom::Start(start)).await?;
                 let range_header = format!("bytes={}-{}", start, end);
                 let resp = client_clone
@@ -305,6 +316,103 @@ mod tests {
     use crate::config::VersionedConfig;
     use crate::database::setup_database;
     use crate::downloader::Downloader;
+
+    #[tokio::test]
+    async fn shared_transfer_limit_covers_chunks_and_serial_fallback() {
+        use axum::{
+            Router,
+            body::Body,
+            extract::State,
+            http::{HeaderMap, StatusCode, Uri},
+            routing::get,
+        };
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        struct Active(Arc<AtomicUsize>);
+        impl Drop for Active {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        async fn serve(
+            State((active, peak)): State<(Arc<AtomicUsize>, Arc<AtomicUsize>)>,
+            uri: Uri,
+            headers: HeaderMap,
+        ) -> (StatusCode, HeaderMap, Body) {
+            let data = b"0123456789abcdef";
+            let mut response_headers = HeaderMap::new();
+            let (status, bytes) = if uri.path() == "/range" {
+                response_headers.insert("accept-ranges", "bytes".parse().unwrap());
+                if let Some(range) = headers.get("range") {
+                    let (start, end) = range
+                        .to_str()
+                        .unwrap()
+                        .strip_prefix("bytes=")
+                        .unwrap()
+                        .split_once('-')
+                        .unwrap();
+                    let (start, end) = (start.parse::<usize>().unwrap(), end.parse::<usize>().unwrap());
+                    response_headers.insert(
+                        "content-range",
+                        format!("bytes {start}-{end}/{}", data.len()).parse().unwrap(),
+                    );
+                    (StatusCode::PARTIAL_CONTENT, data[start..=end].to_vec())
+                } else {
+                    (StatusCode::OK, data.to_vec())
+                }
+            } else {
+                (StatusCode::OK, data.to_vec())
+            };
+            response_headers.insert("content-length", bytes.len().to_string().parse().unwrap());
+            let stream = futures::stream::once(async move {
+                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(current, Ordering::SeqCst);
+                let _guard = Active(active);
+                tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                Ok::<_, std::io::Error>(bytes)
+            });
+            (status, response_headers, Body::from_stream(stream))
+        }
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route("/range", get(serve))
+            .route("/serial", get(serve))
+            .with_state((active.clone(), peak.clone()));
+        let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        }));
+        let downloader = Downloader::new(crate::bilibili::Client::new());
+        let config = crate::config::ConcurrentDownloadLimit {
+            enable: true,
+            concurrency: 4,
+            threshold: 0,
+        };
+        let mut first = async_tempfile::TempFile::new().await.unwrap();
+        let mut second = async_tempfile::TempFile::new().await.unwrap();
+        let first_url = format!("{origin}/range");
+        let second_url = format!("{origin}/serial");
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::try_join!(
+                downloader.fetch_internal(&first_url, &mut first, true, &config),
+                downloader.fetch_internal(&second_url, &mut second, true, &config)
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(tokio::fs::read(first.file_path()).await.unwrap(), b"0123456789abcdef");
+        assert_eq!(tokio::fs::read(second.file_path()).await.unwrap(), b"0123456789abcdef");
+        assert!(peak.load(Ordering::SeqCst) <= 2);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        first.drop_async().await;
+        second.drop_async().await;
+        server.abort();
+    }
 
     #[ignore = "only for manual test"]
     #[tokio::test(flavor = "multi_thread")]

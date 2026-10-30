@@ -91,6 +91,7 @@ async fn setup_login_csrf_logout_password_and_legacy_bypass() {
     for path in [
         "/api/videos",
         "/api/config",
+        "/api/platforms",
         "/api/media/pages/999",
         "/api/media/videos/999/cover",
         "/api/ws",

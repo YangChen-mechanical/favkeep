@@ -1,7 +1,7 @@
 use std::borrow::Borrow;
 
 use bili_sync_entity::video;
-use bili_sync_migration::SimpleExpr;
+use bili_sync_migration::{Expr, SimpleExpr};
 use itertools::Itertools;
 use sea_orm::{ColumnTrait, Condition, ConnectionTrait, DatabaseTransaction};
 
@@ -12,11 +12,14 @@ use crate::utils::status::VideoStatus;
 impl StatusFilter {
     pub fn to_video_query(&self) -> Condition {
         let query_builder = VideoStatus::query_builder();
-        match self {
-            Self::Failed => query_builder.failed(),
-            Self::Succeeded => query_builder.succeeded(),
-            Self::Waiting => query_builder.waiting(),
-        }
+        let (bili, state) = match self {
+            Self::Failed => (query_builder.failed(), "failed"),
+            Self::Succeeded => (query_builder.succeeded(), "succeeded"),
+            Self::Waiting => (query_builder.waiting(), "waiting"),
+        };
+        Condition::any()
+            .add(Condition::all().add(video::Column::Platform.eq("bilibili")).add(bili))
+            .add(Expr::cust(format!("video.platform='douyin' AND EXISTS (SELECT 1 FROM page p JOIN douyin_download d ON d.page_id=p.id WHERE p.video_id=video.id AND d.state='{state}')")))
     }
 }
 

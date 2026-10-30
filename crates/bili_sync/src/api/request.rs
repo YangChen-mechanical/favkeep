@@ -38,7 +38,7 @@ pub enum WatchSort {
 
 #[derive(Deserialize)]
 pub struct VideosRequest {
-    pub platform: Option<String>,
+    pub platform: Option<crate::platform::Platform>,
     pub saved_only: Option<bool>,
     pub watch_state: Option<WatchState>,
     pub sort: Option<WatchSort>,
@@ -61,8 +61,10 @@ pub struct ResetVideoStatusRequest {
     pub force: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Validate)]
 pub struct ResetFilteredVideoStatusRequest {
+    #[serde(default)]
+    pub platform: crate::platform::Platform,
     pub collection: Option<i32>,
     pub favorite: Option<i32>,
     pub submission: Option<i32>,
@@ -103,6 +105,8 @@ pub struct UpdateVideoStatusRequest {
 
 #[derive(Deserialize, Validate)]
 pub struct UpdateFilteredVideoStatusRequest {
+    #[serde(default)]
+    pub platform: crate::platform::Platform,
     pub collection: Option<i32>,
     pub favorite: Option<i32>,
     pub submission: Option<i32>,
@@ -173,25 +177,21 @@ pub struct DefaultPathRequest {
     pub name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct PollQrcodeRequest {
     pub qrcode_key: String,
     #[serde(default)]
     pub platform: LoginPlatform,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum LoginPlatform {
-    #[default]
-    Bilibili,
-    Douyin,
-}
+pub use crate::platform::Platform as LoginPlatform;
 
 #[derive(Default, Deserialize)]
 pub struct GenerateQrcodeRequest {
     #[serde(default)]
     pub platform: LoginPlatform,
+    #[serde(default)]
+    pub force_qr: bool,
 }
 
 #[derive(Debug, Deserialize)]

@@ -3,7 +3,7 @@ use crate::{
         error::InnerApiError,
         request::{GenerateQrcodeRequest, LoginPlatform, PollQrcodeRequest},
         response::GenerateQrcodeResponse,
-        wrapper::{ApiError, ApiResponse},
+        wrapper::{ApiError, ApiResponse, ValidatedJson},
     },
     auth::{AuthState, AuthenticatedSession},
     bilibili::{BiliClient, Credential, PollStatus},
@@ -11,7 +11,7 @@ use crate::{
     douyin,
 };
 use axum::extract::Query;
-use axum::{Extension, Json, Router, routing::post};
+use axum::{Extension, Router, routing::post};
 use sea_orm::DatabaseConnection;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -30,12 +30,15 @@ pub async fn generate_qrcode(
     session: Session,
     Query(params): Query<GenerateQrcodeRequest>,
 ) -> Result<ApiResponse<GenerateQrcodeResponse>, ApiError> {
-    if params.platform == LoginPlatform::Douyin {
-        return Ok(ApiResponse::ok(
-            douyin::login::generate(identity.0, auth_state)
-                .await
-                .map_err(douyin_error)?,
-        ));
+    match params.platform {
+        LoginPlatform::Douyin => {
+            return Ok(ApiResponse::ok(
+                douyin::login::generate(identity.0, auth_state, params.force_qr)
+                    .await
+                    .map_err(douyin_error)?,
+            ));
+        }
+        LoginPlatform::Bilibili => {}
     }
     let qrcode = Credential::generate_qrcode(&client.client)
         .await
@@ -55,14 +58,17 @@ pub async fn poll_qrcode(
     Extension(db): Extension<DatabaseConnection>,
     Extension(identity): Extension<AuthenticatedSession>,
     session: Session,
-    Json(params): Json<PollQrcodeRequest>,
+    ValidatedJson(params): ValidatedJson<PollQrcodeRequest>,
 ) -> Result<ApiResponse<Value>, ApiError> {
-    if params.platform == LoginPlatform::Douyin {
-        return Ok(ApiResponse::ok(serde_json::to_value(
-            douyin::login::poll(&identity.0, &params.qrcode_key)
-                .await
-                .map_err(douyin_error)?,
-        )?));
+    match params.platform {
+        LoginPlatform::Douyin => {
+            return Ok(ApiResponse::ok(serde_json::to_value(
+                douyin::login::poll(&identity.0, &params.qrcode_key)
+                    .await
+                    .map_err(douyin_error)?,
+            )?));
+        }
+        LoginPlatform::Bilibili => {}
     }
     if session.get::<String>("bili_qrcode").await?.as_deref() != Some(params.qrcode_key.as_str()) {
         return Err(InnerApiError::BadRequest("二维码不属于当前登录会话，请重新生成".into()).into());
@@ -84,7 +90,7 @@ pub async fn poll_qrcode(
 fn douyin_error(error: douyin::Error) -> InnerApiError {
     InnerApiError::BadRequest(
         match error {
-            douyin::Error::Busy => "抖音账号当前正在运行任务，请稍后重试",
+            douyin::Error::Busy => "已有抖音登录请求进行中，请等待该次登录结束后重试",
             douyin::Error::Paused => "抖音正在冷却，请等待后再验证连接",
             douyin::Error::InvalidData => "二维码不属于当前登录会话，请重新生成",
             _ => "抖音连接服务暂时不可用，请稍后重试",
@@ -102,6 +108,11 @@ mod tests {
         let generate: GenerateQrcodeRequest = serde_json::from_value(json!({})).unwrap();
         let poll: PollQrcodeRequest = serde_json::from_value(json!({"qrcode_key":"fixture"})).unwrap();
         assert_eq!(generate.platform, LoginPlatform::Bilibili);
+        assert!(!generate.force_qr);
+        let generate: GenerateQrcodeRequest =
+            serde_json::from_value(json!({"platform":"douyin","force_qr":true})).unwrap();
+        assert_eq!(generate.platform, LoginPlatform::Douyin);
+        assert!(generate.force_qr);
         assert_eq!(poll.platform, LoginPlatform::Bilibili);
         let poll: PollQrcodeRequest =
             serde_json::from_value(json!({"qrcode_key":"fixture","platform":"douyin"})).unwrap();

@@ -1,3 +1,6 @@
+pub(crate) mod download_context;
+pub(crate) mod sources;
+pub(crate) mod sync;
 use std::borrow::Cow;
 use std::sync::Arc;
 

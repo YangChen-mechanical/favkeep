@@ -1,6 +1,7 @@
 pub mod browser;
 pub mod client;
 pub mod login;
+pub mod progress;
 pub mod runtime;
 pub mod sign;
 pub mod store;

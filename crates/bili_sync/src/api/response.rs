@@ -4,7 +4,7 @@ use sea_orm::prelude::DateTime;
 use sea_orm::{DerivePartialModel, FromQueryResult};
 use serde::Serialize;
 
-use crate::utils::status::{PageStatus, VideoStatus};
+use crate::media::MediaInfo;
 
 #[derive(Serialize)]
 pub struct VideoSourcesResponse {
@@ -84,6 +84,9 @@ pub struct VideoSource {
 #[derive(Serialize, DerivePartialModel, FromQueryResult)]
 #[sea_orm(entity = "video::Entity")]
 pub struct VideoInfo {
+    #[sea_orm(skip)]
+    #[serde(flatten)]
+    pub media: MediaInfo,
     pub id: i32,
     pub platform: String,
     pub platform_id: Option<String>,
@@ -92,7 +95,7 @@ pub struct VideoInfo {
     pub upper_name: String,
     pub valid: bool,
     pub should_download: bool,
-    #[serde(serialize_with = "serde_video_download_status")]
+    #[serde(skip_serializing)]
     pub download_status: u32,
     pub collection_id: Option<i32>,
     pub favorite_id: Option<i32>,
@@ -103,12 +106,15 @@ pub struct VideoInfo {
 #[derive(Serialize, DerivePartialModel, FromQueryResult)]
 #[sea_orm(entity = "page::Entity")]
 pub struct PageInfo {
+    #[sea_orm(skip)]
+    #[serde(flatten)]
+    pub media: MediaInfo,
     pub id: i32,
     pub video_id: i32,
     pub pid: i32,
     pub name: String,
     pub duration: u32,
-    #[serde(serialize_with = "serde_page_download_status")]
+    #[serde(skip_serializing)]
     pub download_status: u32,
 }
 
@@ -125,22 +131,6 @@ pub struct SimplePageInfo {
     pub id: i32,
     pub video_id: i32,
     pub download_status: u32,
-}
-
-fn serde_video_download_status<S>(status: &u32, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    let status: [u32; 5] = VideoStatus::from(*status).into();
-    status.serialize(serializer)
-}
-
-fn serde_page_download_status<S>(status: &u32, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    let status: [u32; 5] = PageStatus::from(*status).into();
-    status.serialize(serializer)
 }
 
 #[derive(Serialize)]

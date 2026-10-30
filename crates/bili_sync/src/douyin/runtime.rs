@@ -8,6 +8,7 @@ use tokio::io::AsyncWriteExt;
 
 use super::browser::{Auth, Session, private_dir, write_private};
 use super::client::{Client, Folder};
+use super::progress::{self, Activity};
 use super::store::{self, AccountOutcome, Outcome};
 use super::{Error, RUNNING, Result};
 use crate::config::{ARGS, Config};
@@ -19,52 +20,68 @@ fn database(_: sea_orm::DbErr) -> Error {
 }
 
 pub async fn refresh(db: &DatabaseConnection, config: &Config) -> Result<()> {
-    let _guard = RUNNING.try_lock().map_err(|_| Error::Busy)?;
-    let saved = Auth::read(&super::login::root().join("auth.json"))?;
-    let account = store::ensure_account(db, &saved.identity).await.map_err(database)?;
-    if account.paused_reason.is_some()
-        || account
-            .next_allowed_at
-            .is_some_and(|t| t > chrono::Utc::now().timestamp())
-    {
-        return Err(Error::Paused);
-    }
+    info!("[抖音] 收到刷新收藏夹请求");
     let result = async {
-        let (session, auth) = restore(config).await?;
-        let fetched = async {
-            let folders = Client::new(&auth).await?.folders().await?;
-            store::sync_folders(db, &auth.identity, &folders)
+        let _guard = RUNNING.try_lock().map_err(|_| Error::Busy)?;
+        let mut activity = progress::start("refresh");
+        let result = async {
+            let saved = Auth::read(&super::login::root().join("auth.json"))?;
+            let account = store::ensure_account(db, &saved.identity).await.map_err(database)?;
+            if account.paused_reason.is_some()
+                || account
+                    .next_allowed_at
+                    .is_some_and(|t| t > chrono::Utc::now().timestamp())
+            {
+                return Err(Error::Paused);
+            }
+            let result = async {
+                activity.stage("restoring", None, None);
+                let (session, auth) = restore(config).await?;
+                let fetched = async {
+                    activity.stage("folders", None, None);
+                    let folders = Client::new(&auth).await?.folders().await?;
+                    store::sync_folders(db, &auth.identity, &folders)
+                        .await
+                        .map_err(database)?;
+                    info!("[抖音] 收藏夹列表已更新，共 {} 个", folders.len());
+                    Ok(())
+                }
+                .await;
+                let closed = session.close().await;
+                fetched.and(closed)
+            }
+            .await;
+            // Listing folders cannot reset rejection history; only a complete scan cycle can.
+            if let Err(
+                error @ (Error::Rejected
+                | Error::LoginExpired
+                | Error::Challenge
+                | Error::IdentityUnverified
+                | Error::AccountChanged),
+            ) = &result
+            {
+                store::account_outcome(
+                    db,
+                    &saved.identity,
+                    account_result(&Err(error.clone())),
+                    config.douyin.interval,
+                )
                 .await
                 .map_err(database)?;
-            Ok(())
+            }
+            result
         }
         .await;
-        let closed = session.close().await;
-        fetched.and(closed)
+        activity.finish(&result);
+        result
     }
     .await;
-    // Listing folders cannot reset rejection history; only a complete scan cycle can.
-    if let Err(
-        error @ (Error::Rejected
-        | Error::LoginExpired
-        | Error::Challenge
-        | Error::IdentityUnverified
-        | Error::AccountChanged),
-    ) = &result
-    {
-        store::account_outcome(
-            db,
-            &saved.identity,
-            account_result(&Err(error.clone())),
-            config.douyin.interval,
-        )
-        .await
-        .map_err(database)?;
-    }
+    progress::report("刷新收藏夹", &result);
     result
 }
 
 pub async fn restore(config: &Config) -> Result<(Session, Auth)> {
+    info!("[抖音] 正在恢复旧会话并验证账号");
     let root = super::login::root();
     let saved = Auth::read(&root.join("auth.json"))?;
     let session = Session::launch(&root, Path::new(&config.douyin.browser)).await?;
@@ -74,6 +91,7 @@ pub async fn restore(config: &Config) -> Result<(Session, Auth)> {
                 let _ = session.close().await;
                 return Err(error);
             }
+            info!("[抖音] 旧会话已恢复，刷新后的凭据已安全保存");
             Ok((session, auth))
         }
         Err(error) => {
@@ -85,27 +103,86 @@ pub async fn restore(config: &Config) -> Result<(Session, Auth)> {
 
 pub async fn run(db: &DatabaseConnection, config: &Config) -> Result<()> {
     let Ok(_guard) = RUNNING.try_lock() else {
+        info!("[抖音] 跳过本轮同步：账号正在处理其他操作");
         return Ok(());
     };
     let root = super::login::root();
     if !root.join("auth.json").exists() {
+        info!("[抖音] 跳过本轮同步：尚未连接账号");
         return Ok(());
     }
-    let saved = Auth::read(&root.join("auth.json"))?;
-    store::ensure_account(db, &saved.identity).await.map_err(database)?;
-    if !store::begin_run(db, &saved.identity).await.map_err(database)? {
-        return Ok(());
-    }
+    let mut activity = progress::start("sync");
+    info!("[抖音] 本轮同步开始");
     let result = async {
-        let (session, auth) = restore(config).await?;
-        let round = scan_and_download(db, config, &auth).await;
-        let closed = session.close().await;
-        round.and(closed)
+        let saved = Auth::read(&root.join("auth.json"))?;
+        store::ensure_account(db, &saved.identity).await.map_err(database)?;
+        if !store::begin_run(db, &saved.identity).await.map_err(database)? {
+            return Err(Error::Paused);
+        }
+        let round = async {
+            activity.stage("restoring", None, None);
+            let (session, auth) = restore(config).await?;
+            let round = scan_and_download(db, config, &auth, &activity).await;
+            let closed = session.close().await;
+            round.and(closed)
+        }
+        .await;
+        // Count remaining eligible work before account_outcome applies a pause or cooldown.
+        if let Ok(pending) = store::pending(db, &saved.identity).await {
+            activity.summary(|s| s.pending = Some(pending.len()));
+        } else {
+            activity.summary(|s| s.pending = None);
+        }
+        store::account_outcome(db, &saved.identity, account_result(&round), config.douyin.interval)
+            .await
+            .map_err(database)?;
+        round
     }
     .await;
-    store::account_outcome(db, &saved.identity, account_result(&result), config.douyin.interval)
-        .await
-        .map_err(database)?;
+    activity.finish(&result);
+    progress::report("同步下载", &result);
+    result
+}
+
+pub async fn resume(db: &DatabaseConnection, config: &Config) -> Result<()> {
+    info!("[抖音] 收到验证连接与恢复请求");
+    let result = async {
+        let _guard = RUNNING.try_lock().map_err(|_| Error::Busy)?;
+        let mut activity = progress::start("resume");
+        let result = async {
+            let auth = Auth::read(&super::login::root().join("auth.json"))?;
+            let account = store::ensure_account(db, &auth.identity).await.map_err(database)?;
+            if account
+                .next_allowed_at
+                .is_some_and(|n| n > chrono::Utc::now().timestamp())
+            {
+                return Err(Error::Paused);
+            }
+            activity.stage("restoring", None, None);
+            let (session, fresh) = match restore(config).await {
+                Ok(restored) => restored,
+                Err(error) => {
+                    store::account_outcome(
+                        db,
+                        &auth.identity,
+                        account_result(&Err(error.clone())),
+                        config.douyin.interval,
+                    )
+                    .await
+                    .map_err(database)?;
+                    return Err(error);
+                }
+            };
+            session.close().await?;
+            store::resume_account(db, &fresh.identity).await.map_err(database)?;
+            Ok(())
+        }
+        .await;
+        activity.finish(&result);
+        result
+    }
+    .await;
+    progress::report("验证连接与恢复", &result);
     result
 }
 
@@ -123,13 +200,30 @@ pub fn account_result(result: &Result<()>) -> AccountOutcome {
     }
 }
 
-async fn scan_and_download(db: &DatabaseConnection, config: &Config, auth: &Auth) -> Result<()> {
+async fn scan_and_download(
+    db: &DatabaseConnection,
+    config: &Config,
+    auth: &Auth,
+    activity: &Activity<'_>,
+) -> Result<()> {
+    activity.stage("folders", None, None);
     let client = Client::new(auth).await?;
     let folders = client.folders().await?;
     let stored = store::sync_folders(db, &auth.identity, &folders)
         .await
         .map_err(database)?;
+    let selected = stored.iter().filter(|f| f.selected && f.available).count();
+    info!(
+        "[抖音] 获取 {} 个收藏夹，本轮扫描 {} 个已启用且可用的收藏夹",
+        stored.len(),
+        selected
+    );
+    if selected == 0 {
+        info!("[抖音] 没有可扫描来源，请先启用收藏夹");
+    }
     for folder in stored.iter().filter(|f| f.selected && f.available) {
+        activity.stage("scanning", Some(&folder.name), None);
+        info!("[抖音] 开始扫描收藏夹 {:?}（{}）", folder.name, folder.id);
         let remote = Folder {
             id: folder.id.clone(),
             name: folder.name.clone(),
@@ -144,7 +238,7 @@ async fn scan_and_download(db: &DatabaseConnection, config: &Config, auth: &Auth
                 return Err(error);
             }
         };
-        store::commit_scan(db, &auth.identity, &folder.id, folder.revision, &items)
+        let committed = store::commit_scan(db, &auth.identity, &folder.id, folder.revision, &items)
             .await
             .map_err(|error| {
                 if error.to_string().contains("douyin_selection_changed") {
@@ -152,23 +246,87 @@ async fn scan_and_download(db: &DatabaseConnection, config: &Config, auth: &Auth
                 } else {
                     Error::File
                 }
-            })?;
+            });
+        let committed = match committed {
+            Ok(committed) => committed,
+            Err(error) => {
+                store::folder_error(db, &auth.identity, &folder.id, &error.to_string())
+                    .await
+                    .map_err(database)?;
+                return Err(error);
+            }
+        };
+        activity.scanned(&committed);
+        info!(
+            "[抖音] 收藏夹 {:?} 扫描已提交：扫描 {}，历史跳过 {}，已有 {}，不支持 {}，新增入库 {}",
+            folder.name,
+            committed.scanned,
+            committed.historical,
+            committed.existing,
+            committed.unsupported,
+            committed.inserted
+        );
+        if committed.baseline {
+            info!(
+                "[抖音] 收藏夹 {:?} 首次历史基线已建立，本次不下载历史内容；后续保存新增视频",
+                folder.name
+            );
+        } else if committed.scanned == 0 {
+            info!("[抖音] 收藏夹 {:?} 为空，没有新增视频", folder.name);
+        } else if committed.inserted == 0 {
+            info!(
+                "[抖音] 收藏夹 {:?} 没有新增入库视频：条目属于历史、已有或不支持类型",
+                folder.name
+            );
+        }
     }
     let mut failure = None;
-    for item in store::pending(db, &auth.identity).await.map_err(database)? {
+    let pending = store::pending(db, &auth.identity).await.map_err(database)?;
+    activity.summary(|s| s.pending = Some(pending.len()));
+    info!("[抖音] 扫描阶段结束，{} 个视频待处理", pending.len());
+    if pending.is_empty() {
+        info!("[抖音] 本轮无需下载：没有符合当前来源规则的待处理视频");
+    }
+    for item in pending {
         // Recheck selection after each completed file; a disabled source must not start another download.
         if !store::is_pending(db, &auth.identity, item.id).await.map_err(database)? {
+            activity.summary(|s| s.pending = None);
             continue;
         }
+        activity.stage("downloading", None, Some(&item.platform_id));
+        info!("[抖音] 开始处理视频 {}", item.platform_id);
         match save(&client, &item.platform_id, Path::new(&config.douyin.path)).await {
-            Ok(outcome) => store::mark_outcome(db, item.id, outcome).await.map_err(database)?,
+            Ok((outcome, kind)) => {
+                activity.stage("registering", None, Some(&item.platform_id));
+                if let Err(error) = store::mark_outcome(db, item.id, outcome).await {
+                    activity.summary(|s| s.failed += 1);
+                    return Err(database(error));
+                }
+                activity.summary(|s| match kind {
+                    SaveKind::Downloaded => s.downloaded += 1,
+                    SaveKind::Reused => s.reused += 1,
+                    SaveKind::Recovered => s.recovered += 1,
+                });
+                activity.summary(|s| s.pending = s.pending.map(|n| n.saturating_sub(1)));
+                info!(
+                    "[抖音] 视频 {} 保存成功：{}，文件已校验、发布并登记",
+                    item.platform_id,
+                    kind.message()
+                );
+            }
             Err(error @ (Error::Rejected | Error::LoginExpired | Error::Challenge | Error::DiskFull)) => {
+                activity.summary(|s| s.failed += 1);
                 return Err(error);
             }
             Err(error) => {
+                activity.summary(|s| {
+                    s.failed += 1;
+                    s.pending = None;
+                });
                 store::mark_outcome(db, item.id, Outcome::Failed)
                     .await
                     .map_err(database)?;
+                error!("[抖音] 视频 {} 下载失败：{}", item.platform_id, error.message());
                 failure.get_or_insert(error);
             }
         }
@@ -176,7 +334,24 @@ async fn scan_and_download(db: &DatabaseConnection, config: &Config, auth: &Auth
     failure.map_or(Ok(()), Err)
 }
 
-async fn save(client: &Client, id: &str, root: &Path) -> Result<Outcome> {
+#[derive(Debug, PartialEq, Eq)]
+enum SaveKind {
+    Downloaded,
+    Reused,
+    Recovered,
+}
+
+impl SaveKind {
+    fn message(&self) -> &'static str {
+        match self {
+            Self::Downloaded => "新下载",
+            Self::Reused => "复用已有成品，未重新下载",
+            Self::Recovered => "恢复已完成的中断文件，未重新下载",
+        }
+    }
+}
+
+async fn save(client: &Client, id: &str, root: &Path) -> Result<(Outcome, SaveKind)> {
     if !super::valid_id(id) || !root.is_absolute() {
         return Err(Error::InvalidData);
     }
@@ -188,7 +363,9 @@ async fn save(client: &Client, id: &str, root: &Path) -> Result<Outcome> {
     let ready = directory.join("video.ready.json");
     let mut title = String::new();
     let mut author = String::new();
+    let mut kind = SaveKind::Downloaded;
     let info = if final_path.try_exists().map_err(Error::from)? {
+        kind = SaveKind::Reused;
         inspect(&final_path).await?
     } else {
         // A valid partial file may have been synced just before a process crash.
@@ -198,7 +375,10 @@ async fn save(client: &Client, id: &str, root: &Path) -> Result<Outcome> {
             None
         };
         let info = match recovered {
-            Some(info) => info,
+            Some(info) => {
+                kind = SaveKind::Recovered;
+                info
+            }
             None => {
                 let details = client.detail(id).await?;
                 title = details.title;
@@ -209,6 +389,7 @@ async fn save(client: &Client, id: &str, root: &Path) -> Result<Outcome> {
                     }
                     tokio::fs::remove_file(&part).await.map_err(Error::from)?;
                 }
+                let transfer = crate::resources::acquire(&crate::resources::TRANSFERS, "抖音视频传输").await;
                 let response = client
                     .media_response(details.urls.first().ok_or(Error::MediaUnavailable)?)
                     .await?;
@@ -236,6 +417,7 @@ async fn save(client: &Client, id: &str, root: &Path) -> Result<Outcome> {
                 file.flush().await.map_err(Error::from)?;
                 file.sync_all().await.map_err(Error::from)?;
                 drop(file);
+                drop(transfer);
                 let info = inspect(&part).await?;
                 let bytes = tokio::fs::metadata(&part).await.map_err(Error::from)?.len();
                 write_private(&ready, &serde_json::json!({"bytes":bytes}))?;
@@ -264,6 +446,7 @@ async fn save(client: &Client, id: &str, root: &Path) -> Result<Outcome> {
     };
     let poster = directory.join("poster.jpg");
     if !poster.exists() {
+        let _process = crate::resources::acquire(&crate::resources::MEDIA_PROCESSES, "视频封面").await;
         let _ = tokio::time::timeout(
             Duration::from_secs(30),
             tokio::process::Command::new(ARGS.ffmpeg_path.as_deref().unwrap_or("ffmpeg"))
@@ -276,14 +459,17 @@ async fn save(client: &Client, id: &str, root: &Path) -> Result<Outcome> {
         )
         .await;
     }
-    Ok(Outcome::Succeeded {
-        path: final_path.to_string_lossy().into_owned(),
-        title,
-        author,
-        duration: info.duration,
-        width: Some(info.width),
-        height: Some(info.height),
-    })
+    Ok((
+        Outcome::Succeeded {
+            path: final_path.to_string_lossy().into_owned(),
+            title,
+            author,
+            duration: info.duration,
+            width: Some(info.width),
+            height: Some(info.height),
+        },
+        kind,
+    ))
 }
 
 async fn ready_part(part: &Path, ready: &Path) -> bool {
@@ -334,6 +520,7 @@ async fn inspect(path: &Path) -> Result<MediaInfo> {
     if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() == 0 {
         return Err(Error::MediaUnavailable);
     }
+    let _process = crate::resources::acquire(&crate::resources::MEDIA_PROCESSES, "视频校验").await;
     let output = tokio::time::timeout(
         Duration::from_secs(30),
         tokio::process::Command::new(ffprobe())

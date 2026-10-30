@@ -15,7 +15,6 @@ use sea_orm::ActiveValue::Set;
 use sea_orm::entity::prelude::*;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QuerySelect, QueryTrait, TransactionTrait};
 
-use crate::adapter::{_ActiveModel, VideoSource as _, VideoSourceEnum};
 use crate::api::error::InnerApiError;
 use crate::api::request::{
     DefaultPathRequest, FullSyncVideoSourceRequest, InsertCollectionRequest, InsertFavoriteRequest,
@@ -26,6 +25,7 @@ use crate::api::response::{
     VideoSourcesDetailsResponse, VideoSourcesResponse,
 };
 use crate::api::wrapper::{ApiError, ApiResponse, ValidatedJson};
+use crate::bilibili::sources::{_ActiveModel, VideoSource as _, VideoSourceEnum};
 use crate::bilibili::{BiliClient, Collection, CollectionItem, FavoriteList, Submission};
 use crate::config::{PathSafeTemplate, TEMPLATE, VersionedConfig};
 use crate::utils::rule::FieldEvaluatable;

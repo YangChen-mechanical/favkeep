@@ -4,7 +4,7 @@ use bili_sync_entity::{page, watch_progress};
 use sea_orm::{ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder};
 
 use crate::api::response::WatchSummary;
-use crate::utils::status::PageStatus;
+use sea_orm::sea_query::Expr;
 
 pub(super) async fn summaries(db: &DatabaseConnection, video_ids: &[i32]) -> Result<Vec<WatchSummary>, DbErr> {
     if video_ids.is_empty() {
@@ -12,8 +12,7 @@ pub(super) async fn summaries(db: &DatabaseConnection, video_ids: &[i32]) -> Res
     }
     let pages = page::Entity::find()
         .filter(page::Column::VideoId.is_in(video_ids.iter().copied()))
-        .filter(PageStatus::query_builder().subtask_succeeded(1))
-        .filter(page::Column::Path.ends_with(".mp4"))
+        .filter(Expr::cust(crate::media::PLAYABLE))
         .order_by_asc(page::Column::Pid)
         .order_by_asc(page::Column::Id)
         .all(db)

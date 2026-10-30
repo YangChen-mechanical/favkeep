@@ -10,7 +10,7 @@ use chromiumoxide::{Browser, BrowserConfig, Page};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::task::JoinHandle;
+use tokio_util::task::AbortOnDropHandle;
 
 use super::{Error, Result, valid_id};
 
@@ -128,11 +128,13 @@ pub fn write_private(path: &Path, data: &impl Serialize) -> Result<()> {
 pub struct Session {
     browser: Browser,
     pub page: Page,
-    handler: JoinHandle<()>,
+    handler: AbortOnDropHandle<()>,
+    _permit: tokio::sync::SemaphorePermit<'static>,
 }
 
 impl Session {
     pub async fn launch(root: &Path, executable: &Path) -> Result<Self> {
+        let permit = crate::resources::acquire(&crate::resources::BROWSERS, "浏览器会话").await;
         private_dir(root)?;
         let profile = root.join("browser");
         private_dir(&profile)?;
@@ -149,15 +151,20 @@ impl Session {
             .build()
             .map_err(|_| Error::Browser)?;
         let (mut browser, mut handler) = Browser::launch(config).await.map_err(|_| Error::Browser)?;
-        let handler = tokio::spawn(async move {
+        let handler = AbortOnDropHandle::new(tokio::spawn(async move {
             while let Some(result) = handler.next().await {
                 if result.is_err() {
                     break;
                 }
             }
-        });
+        }));
         match browser.new_page("about:blank").await {
-            Ok(page) => Ok(Self { browser, page, handler }),
+            Ok(page) => Ok(Self {
+                browser,
+                page,
+                handler,
+                _permit: permit,
+            }),
             Err(_) => {
                 let _ = browser.kill().await;
                 handler.abort();

@@ -19,6 +19,8 @@ mod m20261022_000001_add_watch_progress;
 mod m20261023_000001_add_app_auth;
 mod m20261026_000001_add_douyin;
 
+mod m20261027_000001_platform_media;
+
 pub struct Migrator;
 
 #[async_trait::async_trait]
@@ -42,6 +44,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261022_000001_add_watch_progress::Migration),
             Box::new(m20261023_000001_add_app_auth::Migration),
             Box::new(m20261026_000001_add_douyin::Migration),
+            Box::new(m20261027_000001_platform_media::Migration),
         ]
     }
 }

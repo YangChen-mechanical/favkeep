@@ -10,7 +10,7 @@ use sea_orm::entity::prelude::*;
 use sea_orm::sea_query::SimpleExpr;
 use sea_orm::{DatabaseConnection, Unchanged};
 
-use crate::adapter::{_ActiveModel, VideoSource, VideoSourceEnum};
+use crate::bilibili::sources::{_ActiveModel, VideoSource, VideoSourceEnum};
 use crate::bilibili::{BiliClient, Credential, Dynamic, Submission, VideoInfo};
 
 impl VideoSource for submission::Model {

@@ -78,6 +78,9 @@ where
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
+        if self.0.is::<crate::platform::UnsupportedPlatform>() {
+            return ApiResponse::<()>::bad_request("不支持的平台").into_response();
+        }
         if self.0.is::<crate::config::ConfigConflict>() {
             return (
                 StatusCode::CONFLICT,
@@ -109,7 +112,9 @@ where
     type Rejection = ApiError;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let Json(value) = Json::<T>::from_request(req, state).await?;
+        let Json(value) = Json::<T>::from_request(req, state)
+            .await
+            .map_err(|_| InnerApiError::BadRequest("请求格式无效".into()))?;
         value
             .validate()
             .map_err(|e| ApiError::from(InnerApiError::BadRequest(e.to_string())))?;
