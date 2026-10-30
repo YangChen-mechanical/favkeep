@@ -7,4 +7,22 @@ docs/.vitepress/cache
 docs/.vitepress/dist
 local-data/
 
-auth-setup.secret
+# Local environment, sessions and runtime output
+.env
+.env.*
+!.env.example
+*.secret
+auth.json
+cookies.json
+cookies.txt
+storage-state.json
+storageState.json
+*.log
+__pycache__/
+*.py[cod]
+.venv/
+
+# Machine-specific operations notes
+/raspberry-pi-server.md
+/docs/migration-from-bili-sync.md
+/docs/migration-result-*.md
