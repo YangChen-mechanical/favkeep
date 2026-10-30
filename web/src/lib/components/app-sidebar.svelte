@@ -2,9 +2,9 @@
 	import BotIcon from '@lucide/svelte/icons/bot';
 	import ChartPieIcon from '@lucide/svelte/icons/chart-pie';
 	import FilePlayIcon from '@lucide/svelte/icons/file-play';
-	import MusicIcon from '@lucide/svelte/icons/music-2';
+	import { platforms } from '$lib/stores/platforms';
 	import { page } from '$app/stores';
-	import HeartIcon from '@lucide/svelte/icons/heart';
+
 	import PaletteIcon from '@lucide/svelte/icons/palette';
 	import Settings2Icon from '@lucide/svelte/icons/settings-2';
 	import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal';
@@ -16,7 +16,7 @@
 
 	let { ref = $bindable(null), ...restProps }: ComponentProps<typeof Sidebar.Root> = $props();
 
-	const data = {
+	const data = $derived({
 		header: {
 			title: 'favkeep',
 			subtitle: '后台管理系统',
@@ -41,10 +41,11 @@
 			},
 			{
 				category: '平台',
-				items: [
-					{ title: 'B站', icon: HeartIcon, href: '/platforms/bilibili' },
-					{ title: '抖音', icon: MusicIcon, href: '/platforms/douyin' }
-				]
+				items: $platforms.map((p) => ({
+					title: p.name,
+					icon: FilePlayIcon,
+					href: `/platforms/${p.id}`
+				}))
 			},
 			{ category: '媒体', items: [{ title: '全部视频', icon: FilePlayIcon, href: '/videos' }] }
 		],
@@ -60,7 +61,7 @@
 				href: '/settings'
 			}
 		]
-	};
+	});
 
 	function isActive(href: string) {
 		const path = $page.url.pathname;

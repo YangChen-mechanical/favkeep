@@ -4,11 +4,19 @@
 	import { setBreadcrumb } from '$lib/stores/breadcrumb';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Tabs from '$lib/components/ui/tabs/index.js';
-	import PlatformAccount from '$lib/components/platform-account.svelte';
-	import PlatformSources from '$lib/components/platform-sources.svelte';
-	import PlatformTask from '$lib/components/platform-task.svelte';
+	import BiliAccount from '$lib/components/platforms/bilibili/account.svelte';
+	import BiliSources from '$lib/components/platforms/bilibili/sources.svelte';
+	import BiliTask from '$lib/components/platforms/bilibili/task.svelte';
+	import DouyinAccount from '$lib/components/platforms/douyin/account.svelte';
+	import DouyinSources from '$lib/components/platforms/douyin/sources.svelte';
+	import DouyinTask from '$lib/components/platforms/douyin/task.svelte';
 	import BilibiliSettings from '$lib/components/bilibili-settings.svelte';
+	import { platforms } from '$lib/stores/platforms';
 	import type { Platform } from '$lib/types';
+	const panels = {
+		bilibili: { account: BiliAccount, sources: BiliSources, sync: BiliTask },
+		douyin: { account: DouyinAccount, sources: DouyinSources, sync: DouyinTask }
+	} satisfies Record<Platform, unknown>;
 
 	const steps = [
 		{ id: 'account', label: '连接账号' },
@@ -16,9 +24,13 @@
 		{ id: 'sync', label: '同步任务' }
 	];
 	$: platform = $page.params.platform as Platform;
-	$: views = platform === 'bilibili' ? [...steps, { id: 'settings', label: '下载设置' }] : steps;
-	$: supported = platform === 'bilibili' || platform === 'douyin';
-	$: name = platform === 'douyin' ? '抖音' : 'B站';
+	$: definition = $platforms.find((p) => p.id === platform);
+	$: views = definition?.capabilities.includes('download_settings')
+		? [...steps, { id: 'settings', label: '下载设置' }]
+		: steps;
+	$: supported = !!definition && Object.hasOwn(panels, platform);
+	$: name = definition?.name || '平台不存在';
+	$: selectedPanels = supported ? panels[platform] : null;
 	$: requested = $page.url.searchParams.get('view');
 	$: view = views.some((item) => item.id === requested) ? requested! : 'account';
 	$: setBreadcrumb([{ label: supported ? name : '平台不存在' }]);
@@ -54,10 +66,13 @@
 				<Tabs.Content value={item.id} class="mt-6 space-y-6">
 					{#key platform}
 						{#if view === item.id}
-							{#if item.id === 'account'}<PlatformAccount {platform} />
-							{:else if item.id === 'sources'}<PlatformSources {platform} />
-							{:else if item.id === 'sync'}<PlatformTask {platform} />{:else}<BilibiliSettings
-								/>{/if}
+							{#if selectedPanels}
+								{#if item.id === 'account'}<svelte:component this={selectedPanels.account} />
+								{:else if item.id === 'sources'}<svelte:component this={selectedPanels.sources} />
+								{:else if item.id === 'sync'}<svelte:component this={selectedPanels.sync} />
+								{:else if definition?.capabilities.includes('download_settings')}<BilibiliSettings
+									/>{/if}
+							{/if}
 						{/if}
 					{/key}
 					<div class="flex flex-wrap justify-between gap-3 border-t pt-4">
@@ -77,5 +92,5 @@
 		</Tabs.Root>
 	</div>
 {:else}
-	<p role="alert">平台不存在，请从左侧选择 B站或抖音。</p>
+	<p role="alert">不支持此平台，请从左侧选择已接入的平台。</p>
 {/if}

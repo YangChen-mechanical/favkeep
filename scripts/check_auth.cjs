@@ -50,6 +50,7 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5183';
             }
             if (!loggedIn) businessBeforeLogin++;
             if (!loggedIn || expired) return route.fulfill({ status: 401, json: { message: '请先登录' } });
+            if (url.pathname === '/api/platforms') return json([{ id: 'bilibili', name: 'B站', capabilities: ['status_edit','force_retry','clear_redownload','danmaku','subtitles','multipart','download_settings','qr_refresh'] }, { id: 'douyin', name: '抖音', capabilities: ['retry_failed'] }]);
             if (url.pathname === '/api/videos') return json({ videos: [], total_count: 0 });
             if (url.pathname === '/api/continue-watching') return json([]);
             if (url.pathname.startsWith('/api/media/')) return route.fulfill({ status: 404 });

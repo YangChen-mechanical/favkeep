@@ -9,6 +9,7 @@
 		SheetTitle
 	} from '$lib/components/ui/sheet/index.js';
 	import StatusTaskCard from './status-task-card.svelte';
+	import { biliStatuses } from '$lib/platform';
 	import type { VideoInfo, PageInfo, StatusUpdate, UpdateVideoStatusRequest } from '$lib/types';
 	import { toast } from 'svelte-sonner';
 
@@ -39,20 +40,20 @@
 	let originalPageStatuses = $state<Record<number, number[]>>({});
 
 	$effect(() => {
-		videoStatuses = [...video.download_status];
-		originalVideoStatuses = [...video.download_status];
+		videoStatuses = [...biliStatuses(video)];
+		originalVideoStatuses = [...biliStatuses(video)];
 
 		if (pages.length > 0) {
 			pageStatuses = pages.reduce(
 				(acc, page) => {
-					acc[page.id] = [...page.download_status];
+					acc[page.id] = [...biliStatuses(page)];
 					return acc;
 				},
 				{} as Record<number, number[]>
 			);
 			originalPageStatuses = pages.reduce(
 				(acc, page) => {
-					acc[page.id] = [...page.download_status];
+					acc[page.id] = [...biliStatuses(page)];
 					return acc;
 				},
 				{} as Record<number, number[]>
@@ -92,7 +93,7 @@
 		if (pages.length > 0) {
 			pageStatuses = pages.reduce(
 				(acc, page) => {
-					acc[page.id] = [...page.download_status];
+					acc[page.id] = [...biliStatuses(page)];
 					return acc;
 				},
 				{} as Record<number, number[]>
@@ -215,7 +216,7 @@
 										{#each pageTaskNames as taskName, index (index)}
 											<StatusTaskCard
 												{taskName}
-												currentStatus={(pageStatuses[page.id] || page.download_status)[index] ?? 0}
+												currentStatus={(pageStatuses[page.id] || biliStatuses(page))[index] ?? 0}
 												originalStatus={originalPageStatuses[page.id]?.[index] ?? 0}
 												onStatusChange={(newStatus) =>
 													handlePageStatusChange(page.id, index, newStatus)}

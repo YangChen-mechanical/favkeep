@@ -69,7 +69,7 @@
 				video={videoData.video}
 				pages={videoData.pages}
 				playableIds={videoData.playable_page_ids ??
-					videoData.pages.filter((p) => p.download_status[1] === 7).map((p) => p.id)}
+					videoData.pages.filter((p) => p.media_ready).map((p) => p.id)}
 				progress={videoData.watch_progress ?? []}
 				initialPageId={videoData.watch_summary?.resume_page_id}
 			/>{/key}{/if}

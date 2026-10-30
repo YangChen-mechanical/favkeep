@@ -11,6 +11,7 @@
 	import WatchCard from '$lib/components/watch-card.svelte';
 	import Pagination from '$lib/components/pagination.svelte';
 	import api from '$lib/api';
+	import { platforms } from '$lib/stores/platforms';
 	import type { ApiError, VideosResponse, WatchState, Platform } from '$lib/types';
 
 	const filters: { value: WatchState | ''; label: string }[] = [
@@ -28,12 +29,7 @@
 	let state: WatchState | '';
 	let sort: 'added' | 'title';
 	let platform: Platform | '';
-	$: platform =
-		$page.url.searchParams.get('platform') === 'douyin'
-			? 'douyin'
-			: $page.url.searchParams.get('platform') === 'bilibili'
-				? 'bilibili'
-				: '';
+	$: platform = ($page.url.searchParams.get('platform') || '') as Platform | '';
 	$: query = $page.url.searchParams.get('q') || '';
 	$: state = filters.find((f) => f.value === $page.url.searchParams.get('state'))?.value || '';
 	$: sort = $page.url.searchParams.get('sort') === 'title' ? 'title' : 'added';
@@ -118,9 +114,9 @@
 					id="watch-platform"
 					value={platform}
 					onchange={(event) => update('platform', event.currentTarget.value)}
-					><option value="">全部平台</option><option value="bilibili">B站</option><option
-						value="douyin">抖音</option
-					></select
+					><option value="">全部平台</option>{#each $platforms as item (item.id)}<option
+							value={item.id}>{item.name}</option
+						>{/each}</select
 				>
 				<SlidersIcon size={14} /><label class="sr-only" for="watch-sort">排序</label><select
 					id="watch-sort"

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { platformLabels, sourceVideoUrl } from '$lib/platform';
+	import { platformLabels } from '$lib/stores/platforms';
 	import { onMount } from 'svelte';
 	import CheckIcon from '@lucide/svelte/icons/check';
 	import CircleIcon from '@lucide/svelte/icons/circle';
@@ -59,6 +59,7 @@
 		}
 	}
 	export async function flush(): Promise<boolean> {
+		if (!alive) return true;
 		if (conflict) return false;
 		if (!loaded || !restored || !player || !Number.isFinite(player.currentTime)) return !error;
 		const update = {
@@ -76,6 +77,7 @@
 				while (pending && !conflict) {
 					const update = pending;
 					pending = null;
+					if (key(update.position_ms, update.completed) === lastSaved) continue;
 					const { data } = await api.saveWatchProgress(page.id, { ...update, revision }, true);
 					revision = data.revision;
 					lastSaved = key(update.position_ms, update.completed);
@@ -148,9 +150,9 @@
 	</div>
 	<div class="video-details">
 		<div class="video-kicker">
-			<span class="saved-dot"></span>已保存到本地<span>·</span>{platformLabels[video.platform]}<span
-				>·</span
-			>{formatTime(page.duration)}<span>·</span>P{page.pid}
+			<span class="saved-dot"></span>已保存到本地<span>·</span>{$platformLabels[
+				video.platform
+			]}<span>·</span>{formatTime(page.duration)}<span>·</span>P{page.pid}
 		</div>
 		<h1>{video.name}</h1>
 		<div class="details-bottom">
@@ -159,12 +161,12 @@
 					>{video.upper_name}</span
 				>
 			</div>
-			{#if sourceVideoUrl(video)}<Button
+			{#if video.source_url}<Button
 					variant="outline"
 					size="sm"
-					href={sourceVideoUrl(video)!}
+					href={video.source_url!}
 					target="_blank"
-					rel="noopener noreferrer">在{platformLabels[video.platform]}打开</Button
+					rel="noopener noreferrer">在{$platformLabels[video.platform]}打开</Button
 				>{/if}
 			<Button
 				variant="outline"

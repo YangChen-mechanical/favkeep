@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { platformLabels, sourceVideoUrl } from '$lib/platform';
+	import { platformLabels } from '$lib/stores/platforms';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
@@ -169,7 +169,7 @@
 			<h2 class="text-xl font-semibold">视频信息</h2>
 			<div class="flex gap-2">
 				<Button size="sm" variant="outline" href="/watch/{videoData.video.id}">前往播放</Button>
-				{#if videoData.video.platform !== 'douyin'}
+				{#if videoData.video.allowed_actions.includes('status_edit')}
 					<Button
 						size="sm"
 						variant="outline"
@@ -207,17 +207,22 @@
 					class="shrink-0 cursor-pointer "
 					onclick={() =>
 						videoData &&
-						sourceVideoUrl(videoData.video) &&
-						window.open(sourceVideoUrl(videoData.video)!, '_blank', 'noopener,noreferrer')}
-					disabled={!sourceVideoUrl(videoData.video)}
+						videoData.video.source_url &&
+						window.open(videoData.video.source_url!, '_blank', 'noopener,noreferrer')}
+					disabled={!videoData.video.source_url}
 				>
 					<SquareArrowOutUpRightIcon class="mr-2 h-4 w-4" />
-					在{platformLabels[videoData.video.platform]}打开
+					在{$platformLabels[videoData.video.platform]}打开
 				</Button>
 			</div>
 		</div>
+		{#if videoData.video.allowed_actions.includes('retry_failed') && videoData.video.platform === 'douyin'}<Button
+				size="sm"
+				variant="outline"
+				onclick={() => handleReset(false)}>重试失败下载</Button
+			>{/if}
 		{#if videoData.video.platform === 'douyin'}<p class="text-muted-foreground mb-4 text-sm">
-				抖音仅保存视频内容。下载失败时，请到仪表盘重试抖音同步；暂停时先验证连接并恢复。
+				抖音仅保存视频内容。下载失败时，请到平台的同步任务中重试；暂停时先验证连接并恢复。
 			</p>{/if}
 
 		<div style="margin-bottom: 1rem;">
@@ -260,7 +265,11 @@
 								platform_id: videoData.video.platform_id,
 								name: `P${pageInfo.pid}: ${pageInfo.name}`,
 								upper_name: '',
-								download_status: pageInfo.download_status,
+								download_state: pageInfo.download_state,
+								media_ready: pageInfo.media_ready,
+								source_url: videoData.video.source_url,
+								allowed_actions: [],
+								platform_details: pageInfo.platform_details,
 								should_download: videoData.video.should_download,
 								valid: videoData.video.valid
 							}}
@@ -283,7 +292,7 @@
 	</section>
 
 	<!-- 状态编辑器 -->
-	{#if videoData.video.platform !== 'douyin'}
+	{#if videoData.video.allowed_actions.includes('status_edit')}
 		<StatusEditor
 			bind:open={statusEditorOpen}
 			video={videoData.video}

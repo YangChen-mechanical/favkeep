@@ -4,6 +4,7 @@
 	import * as Card from '$lib/components/ui/card';
 	import { toast } from 'svelte-sonner';
 	import api from '$lib/api';
+	import { platformLabels, platforms } from '$lib/stores/platforms';
 	import type { ApiError, Platform } from '$lib/types';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
@@ -28,6 +29,8 @@
 
 	export let onSuccess: () => void;
 	export let platform: Platform = 'bilibili';
+	$: canRefresh =
+		$platforms.find((item) => item.id === platform)?.capabilities.includes('qr_refresh') ?? false;
 
 	export function init() {
 		generateQrcode();
@@ -85,7 +88,7 @@
 		pendingMessage = '';
 
 		try {
-			const response = await api.generateQrcode(platform);
+			const response = await api.generateQrcode(platform, platform === 'douyin');
 			if (request !== generation) return;
 			qrcodeKey = response.data.qrcode_key;
 			pendingMessage = response.data.message || '';
@@ -246,7 +249,7 @@
 								<p>已扫描，请在手机上确认登录</p>
 							</div>
 						{:else}
-							<p>请使用{platform === 'douyin' ? '抖音' : '哔哩哔哩'} APP 扫描二维码</p>
+							<p>请使用{$platformLabels[platform]} APP 扫描二维码</p>
 						{/if}
 					{:else if status === 'expired'}
 						<p>二维码已过期</p>
@@ -283,10 +286,10 @@
 						size="sm"
 						onclick={generateQrcode}
 						class="w-full"
-						disabled={platform === 'douyin'}
+						disabled={!canRefresh}
 					>
 						<RefreshCw class="mr-2 h-4 w-4" />
-						{platform === 'douyin' ? '二维码有效中' : '刷新二维码'}
+						{canRefresh ? '刷新二维码' : '二维码有效中'}
 					</Button>
 				{:else}
 					<Button variant="outline" size="sm" onclick={generateQrcode} class="w-full">

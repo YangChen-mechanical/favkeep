@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { platformLabels } from '$lib/stores/platforms';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -7,7 +8,7 @@
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import type { VideoInfo } from '$lib/types';
-	import { platformLabels, sourceVideoUrl } from '$lib/platform';
+	import { biliStatuses } from '$lib/platform';
 	import BrushCleaningIcon from '@lucide/svelte/icons/brush-cleaning';
 	import ClockIcon from '@lucide/svelte/icons/clock';
 	import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
@@ -100,13 +101,19 @@
 	}
 
 	$: statuses =
-		video.platform === 'douyin'
-			? [video.download_status[mode === 'page' ? 1 : 4]]
-			: video.download_status;
+		video.platform_details.platform === 'bilibili'
+			? biliStatuses(video)
+			: [
+					video.download_state === 'succeeded'
+						? 7
+						: video.download_state === 'waiting'
+							? 0
+							: video.platform_details.failures
+				];
 	$: overallStatus = getOverallStatus(statuses, video.should_download, video.valid);
 	$: completed = statuses.filter((status) => status === 7).length;
 	$: total = statuses.length;
-	$: sourceUrl = sourceVideoUrl(video);
+	$: sourceUrl = video.source_url;
 
 	async function handleReset() {
 		resetting = true;
@@ -151,7 +158,7 @@
 			>
 				{displayTitle}
 				{#if mode !== 'page'}<span class="text-muted-foreground ml-2 text-xs"
-						>{platformLabels[video.platform]}</span
+						>{$platformLabels[video.platform]}</span
 					>{/if}
 			</CardTitle>
 			<Badge
@@ -246,18 +253,18 @@
 							{/snippet}
 						</DropdownMenu.Trigger>
 						<DropdownMenu.Content align="start" class="w-48">
-							{#if video.platform !== 'douyin'}
+							{#if video.allowed_actions.includes('retry_failed')}
 								<DropdownMenu.Item class="cursor-pointer" onclick={() => (resetDialogOpen = true)}>
 									<RotateCcwIcon class="mr-2 h-4 w-4" />
 									重置
 								</DropdownMenu.Item>
-								<DropdownMenu.Item
-									class="cursor-pointer"
-									onclick={() => (clearAndResetDialogOpen = true)}
-								>
-									<BrushCleaningIcon class="mr-2 h-4 w-4" />
-									清空重置
-								</DropdownMenu.Item>
+								{#if video.allowed_actions.includes('clear_redownload')}<DropdownMenu.Item
+										class="cursor-pointer"
+										onclick={() => (clearAndResetDialogOpen = true)}
+									>
+										<BrushCleaningIcon class="mr-2 h-4 w-4" />
+										清空重置
+									</DropdownMenu.Item>{/if}
 							{/if}
 							<DropdownMenu.Item
 								class="cursor-pointer"
@@ -265,7 +272,7 @@
 								disabled={!sourceUrl}
 							>
 								<SquareArrowOutUpRightIcon class="mr-2 h-4 w-4" />
-								在{platformLabels[video.platform]}打开
+								在{$platformLabels[video.platform]}打开
 							</DropdownMenu.Item>
 						</DropdownMenu.Content>
 					</DropdownMenu.Root>
@@ -289,21 +296,21 @@
 			</AlertDialog.Description>
 		</AlertDialog.Header>
 
-		<div class="space-y-4 py-4">
-			<div class="rounded-lg border border-orange-200 bg-orange-50 p-3">
-				<div class="mb-2 flex items-center space-x-2">
-					<Checkbox id="force-reset-all" bind:checked={forceReset} />
-					<Label for="force-reset-all" class="text-sm font-medium text-orange-700"
-						>⚠️ 强制重置</Label
-					>
+		{#if video.allowed_actions.includes('force_retry')}<div class="space-y-4 py-4">
+				<div class="rounded-lg border border-orange-200 bg-orange-50 p-3">
+					<div class="mb-2 flex items-center space-x-2">
+						<Checkbox id="force-reset-all" bind:checked={forceReset} />
+						<Label for="force-reset-all" class="text-sm font-medium text-orange-700"
+							>⚠️ 强制重置</Label
+						>
+					</div>
+					<p class="text-xs leading-relaxed text-orange-700">
+						除重置失败状态外还会检查修复任务状态的标识位 <br />
+						版本升级引入新任务时勾选该选项进行重置，可以允许旧视频执行新任务
+					</p>
 				</div>
-				<p class="text-xs leading-relaxed text-orange-700">
-					除重置失败状态外还会检查修复任务状态的标识位 <br />
-					版本升级引入新任务时勾选该选项进行重置，可以允许旧视频执行新任务
-				</p>
 			</div>
-		</div>
-
+		{/if}
 		<AlertDialog.Footer>
 			<AlertDialog.Cancel
 				onclick={() => {

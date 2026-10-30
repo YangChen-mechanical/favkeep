@@ -33,17 +33,18 @@ const expect = playwrightExpect.configure({ timeout: 15000 });
           ? "很长很长的中文视频标题：用于验证两行截断之后仍能查看完整名称以及窄屏显示效果"
           : `测试视频 ${id}`,
       bvid: `BV${id}`,
+      platform: "bilibili", platform_id: `BV${id}`, source_url:`https://www.bilibili.com/video/BV${id}/`,allowed_actions:[],media_ready:true, download_state:"succeeded",
       upper_name: "测试作者",
       valid: true,
       should_download: true,
-      download_status: [7, 7, 7, 7, 7],
+      platform_details: {platform:"bilibili", download_status:[7,7,7,7,7]},
     });
     const parts = [101, 102, 103].map((id, i) => ({
       id,
       pid: i + 1,
       name: `选集 ${i + 1}`,
       duration: 120,
-      download_status: [1, i === 2 ? 0 : 7, 1, 1, 1],
+      download_state:"failed",media_ready:i !== 2,source_url:null,allowed_actions:[],platform_details:{platform:"bilibili",download_status:[1,i === 2 ? 0 : 7,1,1,1]},
     }));
     const progress = new Map([
       [102, { page_id: 102, position_ms: 2000, completed: false, revision: 1 }],
@@ -67,6 +68,7 @@ const expect = playwrightExpect.configure({ timeout: 15000 });
       const url = new URL(req.url());
       const json = (data, status = 200) =>
         route.fulfill({ status, json: { status_code: status, data } });
+      if (url.pathname === '/api/platforms') return json([{ id: 'bilibili', name: 'B站', capabilities: ['status_edit','force_retry','clear_redownload','danmaku','subtitles','multipart','download_settings','qr_refresh'] }, { id: 'douyin', name: '抖音', capabilities: ['retry_failed'] }]);
       if (url.pathname.startsWith("/api/media/pages/")) {
         const range = req.headers().range;
         if (range) {

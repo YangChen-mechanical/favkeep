@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { platforms } from '$lib/stores/platforms';
 	import { onMount } from 'svelte';
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card/index.js';
 	import { Progress } from '$lib/components/ui/progress/index.js';
@@ -271,10 +272,10 @@
 				><CardContent class="space-y-3"
 					><p class="text-muted-foreground text-sm">进入对应平台管理账号、收藏来源和同步任务。</p>
 					<div class="flex flex-wrap gap-2">
-						<Button variant="outline" href="/platforms/bilibili">B站</Button><Button
-							variant="outline"
-							href="/platforms/douyin">抖音</Button
-						>
+						{#each $platforms as platform (platform.id)}<Button
+								variant="outline"
+								href={`/platforms/${platform.id}`}>{platform.name}</Button
+							>{/each}
 					</div></CardContent
 				></Card
 			>

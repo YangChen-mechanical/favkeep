@@ -34,8 +34,24 @@ export interface VideoSourcesResponse {
 }
 
 export type Platform = 'bilibili' | 'douyin';
+export interface PlatformInfo {
+	id: Platform;
+	name: string;
+	capabilities: string[];
+}
+export type DownloadState = 'waiting' | 'succeeded' | 'failed';
+export type PlatformDetails =
+	| { platform: 'bilibili'; download_status: [number, number, number, number, number] }
+	| { platform: 'douyin'; failures: number };
+export interface MediaInfo {
+	download_state: DownloadState;
+	media_ready: boolean;
+	source_url: string | null;
+	allowed_actions: string[];
+	platform_details: PlatformDetails;
+}
 
-export interface VideoInfo {
+export interface VideoInfo extends MediaInfo {
 	id: number;
 	platform: Platform;
 	platform_id: string | null;
@@ -44,7 +60,6 @@ export interface VideoInfo {
 	upper_name: string;
 	valid: boolean;
 	should_download: boolean;
-	download_status: [number, number, number, number, number];
 	collection_id?: number;
 	favorite_id?: number;
 	submission_id?: number;
@@ -67,12 +82,11 @@ export interface WatchSummary {
 	resume_position_ms: number;
 }
 
-export interface PageInfo {
+export interface PageInfo extends MediaInfo {
 	id: number;
 	pid: number;
 	name: string;
 	duration: number;
-	download_status: [number, number, number, number, number];
 }
 
 export interface WatchProgress {
@@ -469,6 +483,27 @@ export interface DouyinStatus {
 	rejections: number;
 	task: {
 		is_running: boolean;
+		current?: {
+			operation: 'login' | 'refresh' | 'sync' | 'resume';
+			stage: string;
+			folder: string | null;
+			video: string | null;
+		} | null;
+		last_sync?: {
+			started_at: string;
+			finished_at: string | null;
+			scanned: number;
+			historical: number;
+			existing: number;
+			unsupported: number;
+			inserted: number;
+			downloaded: number;
+			reused: number;
+			recovered: number;
+			failed: number;
+			pending: number | null;
+			error: string | null;
+		} | null;
 		last_run: string | null;
 		last_finish: string | null;
 		next_run: string | null;

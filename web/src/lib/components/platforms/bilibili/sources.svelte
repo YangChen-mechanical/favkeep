@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { douyinMessage } from '$lib/platform';
 	import { onMount } from 'svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
@@ -25,7 +24,6 @@
 	import { toast } from 'svelte-sonner';
 	import type {
 		ApiError,
-		DouyinFolder,
 		FilterOption,
 		VideoSourceDetail,
 		VideoSourcesDetailsResponse,
@@ -36,52 +34,14 @@
 	import ListRestartIcon from '@lucide/svelte/icons/list-restart';
 	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
 	import FilterOptionEditor from '$lib/components/filter-option-editor.svelte';
-
-	export let platform: 'bilibili' | 'douyin';
-
 	let videoSourcesData: VideoSourcesDetailsResponse | null = null;
 	let loading = false;
 	let activeTab = 'favorites';
 	let globalFilterOption: FilterOption | null = null;
-	let douyinFolders: DouyinFolder[] = [];
-	let douyinLoading = false;
-	let douyinError = '';
-	let douyinSaving = '';
-
-	async function loadDouyinFolders(refresh = false) {
-		douyinLoading = true;
-		douyinError = '';
-		try {
-			const response = refresh ? await api.refreshDouyinFolders() : await api.getDouyinFolders();
-			douyinFolders = response.data.folders;
-		} catch (error) {
-			douyinError = (error as ApiError).message;
-		} finally {
-			douyinLoading = false;
-		}
-	}
-
-	async function toggleDouyinFolder(folder: DouyinFolder, enabled: boolean) {
-		if (douyinSaving) return;
-		douyinSaving = folder.id;
-		try {
-			const response = await api.updateDouyinFolder(folder.id, enabled);
-			douyinFolders = douyinFolders.map((item) => (item.id === folder.id ? response.data : item));
-			toast.success(
-				enabled ? '已启用，将补齐此收藏夹的视频' : '已停止同步，本地文件和观看记录保留'
-			);
-		} catch (error) {
-			toast.error('更新收藏夹失败', { description: (error as ApiError).message });
-		} finally {
-			douyinSaving = '';
-		}
-	}
-
 	// 添加对话框状态
 	let showAddDialog = false;
 	let addDialogType: 'favorites' | 'collections' | 'submissions' = 'favorites';
 	let adding = false;
-
 	// 编辑对话框状态
 	let showEditDialog = false;
 	let editingSource: VideoSourceDetail | null = null;
@@ -90,27 +50,23 @@
 	let saving = false;
 	let useCustomFilterOption = false;
 	let editFilterOption: FilterOption | null = null;
-
 	// 规则评估对话框状态
 	let showEvaluateDialog = false;
 	let evaluateSource: VideoSourceDetail | null = null;
 	let evaluateType = '';
 	let evaluating = false;
-
 	// 删除对话框状态
 	let showRemoveDialog = false;
 	let removeSource: VideoSourceDetail | null = null;
 	let removeType = '';
 	let removeIdx: number = 0;
 	let removing = false;
-
 	// 全量更新对话框状态
 	let showFullSyncDialog = false;
 	let fullSyncSource: VideoSourceDetail | null = null;
 	let fullSyncType = '';
 	let fullSyncDeleteLocal = false;
 	let fullSyncing = false;
-
 	// 编辑表单数据
 	let editForm = {
 		path: '',
@@ -118,19 +74,17 @@
 		rule: null as Rule | null,
 		useDynamicApi: null as boolean | null
 	};
-
 	// 表单数据
 	let favoriteForm = { fid: '', path: '' };
 	let collectionForm = { sid: '', mid: '', collection_type: '2', path: '' }; // 默认为合集
-	let submissionForm = { upper_id: '', path: '' };
 
+	let submissionForm = { upper_id: '', path: '' };
 	const TAB_CONFIG = {
 		favorites: { label: '收藏夹', icon: HeartIcon },
 		collections: { label: '合集 / 列表', icon: FolderIcon },
 		submissions: { label: '用户投稿', icon: UserIcon },
 		watch_later: { label: '稍后再看', icon: ClockIcon }
 	} as const;
-
 	// 数据加载
 	async function loadVideoSources() {
 		loading = true;
@@ -149,7 +103,6 @@
 			loading = false;
 		}
 	}
-
 	// 打开编辑对话框
 	function openEditDialog(type: string, source: VideoSourceDetail, idx: number) {
 		editingSource = source;
@@ -165,27 +118,23 @@
 		editFilterOption = structuredClone(source.filterOption ?? globalFilterOption!);
 		showEditDialog = true;
 	}
-
 	function openEvaluateRules(type: string, source: VideoSourceDetail) {
 		evaluateSource = source;
 		evaluateType = type;
 		showEvaluateDialog = true;
 	}
-
 	function openRemoveDialog(type: string, source: VideoSourceDetail, idx: number) {
 		removeSource = source;
 		removeType = type;
 		removeIdx = idx;
 		showRemoveDialog = true;
 	}
-
 	function openFullSyncDialog(type: string, source: VideoSourceDetail) {
 		fullSyncSource = source;
 		fullSyncType = type;
 		fullSyncDeleteLocal = false;
 		showFullSyncDialog = true;
 	}
-
 	async function fullSyncVideoSource() {
 		if (!fullSyncSource) return;
 		fullSyncing = true;
@@ -216,11 +165,9 @@
 			fullSyncing = false;
 		}
 	}
-
 	// 保存编辑
 	async function saveEdit() {
 		if (!editingSource) return;
-
 		if (!editForm.path?.trim()) {
 			toast.error('路径不能为空');
 			return;
@@ -260,7 +207,6 @@
 			saving = false;
 		}
 	}
-
 	async function evaluateRules() {
 		if (!evaluateSource) return;
 		evaluating = true;
@@ -280,7 +226,6 @@
 			evaluating = false;
 		}
 	}
-
 	async function removeVideoSource() {
 		if (!removeSource) return;
 		removing = true;
@@ -307,12 +252,10 @@
 			removing = false;
 		}
 	}
-
 	function getSourcesForTab(tabValue: string): VideoSourceDetail[] {
 		if (!videoSourcesData) return [];
 		return videoSourcesData[tabValue as keyof VideoSourcesDetailsResponse] as VideoSourceDetail[];
 	}
-
 	// 打开添加对话框
 	function openAddDialog(type: 'favorites' | 'collections' | 'submissions') {
 		addDialogType = type;
@@ -322,7 +265,6 @@
 		submissionForm = { upper_id: '', path: '' };
 		showAddDialog = true;
 	}
-
 	// 处理添加
 	async function handleAdd() {
 		adding = true;
@@ -361,7 +303,6 @@
 					});
 					break;
 			}
-
 			toast.success('添加成功');
 			showAddDialog = false;
 			loadVideoSources(); // 重新加载数据
@@ -373,96 +314,14 @@
 			adding = false;
 		}
 	}
-
 	// 初始化
 	onMount(() => {
-		if (platform === 'douyin') void loadDouyinFolders();
-		else void loadVideoSources();
+		void loadVideoSources();
 	});
 </script>
 
 <div class="space-y-6">
-	{#if platform === 'douyin'}
-		<section class="space-y-4" aria-label="抖音收藏夹">
-			<div class="flex flex-wrap items-center justify-between gap-3">
-				<div>
-					<h2 class="font-semibold">抖音收藏夹</h2>
-					<p class="text-muted-foreground mt-1 text-sm">
-						仅同步勾选的收藏夹。取消勾选保留本地文件和观看记录，重新勾选后自动补齐。
-					</p>
-				</div>
-				<Button
-					variant="outline"
-					size="sm"
-					onclick={() => loadDouyinFolders(true)}
-					disabled={douyinLoading || !!douyinSaving}
-					><RefreshCwIcon class="mr-2 h-4 w-4" />{douyinLoading
-						? '加载中…'
-						: '刷新抖音收藏夹'}</Button
-				>
-			</div>
-			<p class="text-muted-foreground text-xs">
-				首次同步完整扫描并建立基线，后续同步新增视频。图文和实况暂不支持。列表刷新需先在<a
-					href="/platforms/douyin?view=account"
-					class="underline">连接账号</a
-				>连接抖音。
-			</p>
-			{#if douyinError}<p class="text-destructive text-sm" role="alert">{douyinError}</p>
-				<Button variant="outline" size="sm" onclick={() => loadDouyinFolders()}
-					>重新加载本地列表</Button
-				>{/if}
-			{#if douyinFolders.length}
-				<div class="overflow-x-auto">
-					<Table.Root>
-						<Table.Header
-							><Table.Row
-								><Table.Head>同步</Table.Head><Table.Head>收藏夹</Table.Head><Table.Head
-									>最近扫描数量</Table.Head
-								><Table.Head>基线</Table.Head><Table.Head>最近同步结果</Table.Head></Table.Row
-							></Table.Header
-						>
-						<Table.Body
-							>{#each douyinFolders as folder (folder.id)}<Table.Row>
-									<Table.Cell
-										><Checkbox
-											checked={folder.enabled}
-											disabled={!!douyinSaving ||
-												douyinLoading ||
-												(folder.available === false && !folder.enabled)}
-											aria-label={`同步收藏夹 ${folder.name}`}
-											onCheckedChange={(enabled) => toggleDouyinFolder(folder, enabled)}
-										/></Table.Cell
-									>
-									<Table.Cell class="font-medium">{folder.name}</Table.Cell><Table.Cell
-										>{folder.video_count}</Table.Cell
-									>
-									<Table.Cell
-										>{#if folder.baseline_at}<span class="text-sm"
-												>{new Date(folder.baseline_at).toLocaleString('zh-CN')}</span
-											>{:else}<Badge variant="secondary">尚未建立</Badge>{/if}</Table.Cell
-									>
-									<Table.Cell
-										>{#if folder.available === false}<span class="text-destructive text-sm"
-												>收藏夹已不可用，已停止同步</span
-											>{:else if folder.last_error}<p class="text-destructive text-sm">
-												{douyinMessage(folder.last_error)}
-											</p>{:else if folder.last_sync_at}<span class="text-sm"
-												>{new Date(folder.last_sync_at).toLocaleString('zh-CN')} · 同步成功</span
-											>{:else}<span class="text-muted-foreground text-sm"
-												>{folder.enabled ? '等待首次同步' : '未启用'}</span
-											>{/if}</Table.Cell
-									>
-								</Table.Row>{/each}</Table.Body
-						>
-					</Table.Root>
-				</div>
-			{:else if !douyinLoading && !douyinError}<p
-					class="text-muted-foreground py-10 text-center text-sm"
-				>
-					尚无抖音收藏夹，连接账号后点击刷新。
-				</p>{/if}
-		</section>
-	{:else if loading}
+	{#if loading}
 		<div class="flex items-center justify-center py-12">
 			<div class="text-muted-foreground">加载中...</div>
 		</div>
@@ -472,26 +331,28 @@
 			<Button variant="outline" href="/me/collections">从我追的合集添加</Button>
 			<Button variant="outline" href="/me/uppers">从关注的 UP 主添加</Button>
 		</div>
+
 		<Tabs.Root bind:value={activeTab} class="w-full">
 			<Tabs.List class="grid w-full grid-cols-4">
 				{#each Object.entries(TAB_CONFIG) as [key, config] (key)}
-					<Tabs.Trigger value={key} class="relative">
-						{config.label}
-					</Tabs.Trigger>
+					<Tabs.Trigger value={key} class="relative">{config.label}</Tabs.Trigger>
 				{/each}
 			</Tabs.List>
+
 			{#each Object.entries(TAB_CONFIG) as [key, config] (key)}
 				{@const sources = getSourcesForTab(key)}
+
 				<Tabs.Content value={key} class="mt-6">
 					<div class="mb-4 flex items-center justify-between">
 						<div></div>
+
 						{#if key === 'favorites' || key === 'collections' || key === 'submissions'}
-							<Button size="sm" onclick={() => openAddDialog(key)} class="flex items-center gap-2">
-								<PlusIcon class="h-4 w-4" />
-								手动添加
-							</Button>
+							<Button size="sm" onclick={() => openAddDialog(key)} class="flex items-center gap-2"
+								><PlusIcon class="h-4 w-4" />手动添加</Button
+							>
 						{/if}
 					</div>
+
 					{#if sources.length > 0}
 						<div class="overflow-x-auto">
 							<Table.Root>
@@ -505,33 +366,36 @@
 										<Table.Head class="w-[10%] text-right">操作</Table.Head>
 									</Table.Row>
 								</Table.Header>
+
 								<Table.Body>
 									{#each sources as source, index (index)}
 										<Table.Row>
 											<Table.Cell class="font-medium">{source.name}</Table.Cell>
+
 											<Table.Cell>
 												<div
 													class="bg-secondary hover:bg-secondary/80 flex w-fit cursor-text items-center gap-2 rounded-md px-2.5 py-1.5 transition-colors"
 												>
 													<FolderIcon class="text-foreground/70 h-3.5 w-3.5 shrink-0" />
-													<span
-														class="text-foreground/70 font-mono text-xs font-medium select-text"
+
+													<span class="text-foreground/70 font-mono text-xs font-medium select-text"
+														>{source.path || '未设置'}</span
 													>
-														{source.path || '未设置'}
-													</span>
 												</div>
 											</Table.Cell>
+
 											<Table.Cell>
 												{#if source.latestRowAt}
-													<Badge variant="secondary" class="flex w-fit items-center gap-1.5">
-														{new Date(source.latestRowAt).toLocaleString('zh-CN')}
-													</Badge>
+													<Badge variant="secondary" class="flex w-fit items-center gap-1.5"
+														>{new Date(source.latestRowAt).toLocaleString('zh-CN')}</Badge
+													>
 												{:else}
-													<Badge variant="secondary" class="flex w-fit items-center gap-1.5">
-														-
-													</Badge>
+													<Badge variant="secondary" class="flex w-fit items-center gap-1.5"
+														>-</Badge
+													>
 												{/if}
 											</Table.Cell>
+
 											<Table.Cell>
 												{#if source.rule && source.rule.length > 0}
 													<Tooltip.Root disableHoverableContent={true}>
@@ -539,35 +403,36 @@
 															<Badge
 																variant="secondary"
 																class="flex w-fit cursor-help items-center gap-1.5"
+																>{source.rule.length} 条规则</Badge
 															>
-																{source.rule.length} 条规则
-															</Badge>
 														</Tooltip.Trigger>
-														<Tooltip.Content>
-															<p class="text-xs">{source.ruleDisplay}</p>
-														</Tooltip.Content>
+
+														<Tooltip.Content
+															><p class="text-xs">{source.ruleDisplay}</p></Tooltip.Content
+														>
 													</Tooltip.Root>
 												{:else}
-													<Badge variant="secondary" class="flex w-fit items-center gap-1.5">
-														-
-													</Badge>
+													<Badge variant="secondary" class="flex w-fit items-center gap-1.5"
+														>-</Badge
+													>
 												{/if}
 											</Table.Cell>
+
 											<Table.Cell>
 												{#if source.enabled}
 													<Badge
 														class="flex w-fit items-center gap-1.5 bg-emerald-700 text-emerald-100"
 													>
 														<CircleCheckBigIcon class="h-3 w-3" />
-														已启用{#if key === 'submissions' && source.useDynamicApi !== null}{source.useDynamicApi
-																? '（动态 API）'
-																: ''}{/if}
+
+														已启用{#if key === 'submissions' && source.useDynamicApi !== null}
+															{source.useDynamicApi ? '（动态 API）' : ''}
+														{/if}
 													</Badge>
 												{:else}
-													<Badge class="flex w-fit items-center gap-1.5 bg-rose-700 text-rose-100 ">
-														<CircleXIcon class="h-3 w-3" />
-														已禁用
-													</Badge>
+													<Badge class="flex w-fit items-center gap-1.5 bg-rose-700 text-rose-100 "
+														><CircleXIcon class="h-3 w-3" />已禁用</Badge
+													>
 												{/if}
 											</Table.Cell>
 
@@ -578,45 +443,39 @@
 															size="sm"
 															variant="outline"
 															onclick={() => openEditDialog(key, source, index)}
-															class="h-8 w-8 p-0"
+															class="h-8 w-8 p-0"><SquarePenIcon class="h-3 w-3" /></Button
 														>
-															<SquarePenIcon class="h-3 w-3" />
-														</Button>
 													</Tooltip.Trigger>
-													<Tooltip.Content>
-														<p class="text-xs">编辑</p>
-													</Tooltip.Content>
+
+													<Tooltip.Content><p class="text-xs">编辑</p></Tooltip.Content>
 												</Tooltip.Root>
+
 												<Tooltip.Root disableHoverableContent={true}>
 													<Tooltip.Trigger>
 														<Button
 															size="sm"
 															variant="outline"
 															onclick={() => openEvaluateRules(key, source)}
-															class="h-8 w-8 p-0"
+															class="h-8 w-8 p-0"><ListRestartIcon class="h-3 w-3" /></Button
 														>
-															<ListRestartIcon class="h-3 w-3" />
-														</Button>
 													</Tooltip.Trigger>
-													<Tooltip.Content>
-														<p class="text-xs">重新评估规则</p>
-													</Tooltip.Content>
+
+													<Tooltip.Content><p class="text-xs">重新评估规则</p></Tooltip.Content>
 												</Tooltip.Root>
+
 												<Tooltip.Root disableHoverableContent={true}>
 													<Tooltip.Trigger>
 														<Button
 															size="sm"
 															variant="outline"
 															onclick={() => openFullSyncDialog(key, source)}
-															class="h-8 w-8 p-0"
+															class="h-8 w-8 p-0"><RefreshCwIcon class="h-3 w-3" /></Button
 														>
-															<RefreshCwIcon class="h-3 w-3" />
-														</Button>
 													</Tooltip.Trigger>
-													<Tooltip.Content>
-														<p class="text-xs">全量更新视频</p>
-													</Tooltip.Content>
+
+													<Tooltip.Content><p class="text-xs">全量更新视频</p></Tooltip.Content>
 												</Tooltip.Root>
+
 												{#if activeTab !== 'watch_later'}
 													<Tooltip.Root disableHoverableContent={true}>
 														<Tooltip.Trigger>
@@ -624,14 +483,11 @@
 																size="sm"
 																variant="outline"
 																onclick={() => openRemoveDialog(key, source, index)}
-																class="h-8 w-8 p-0"
+																class="h-8 w-8 p-0"><Trash2Icon class="h-3 w-3" /></Button
 															>
-																<Trash2Icon class="h-3 w-3" />
-															</Button>
 														</Tooltip.Trigger>
-														<Tooltip.Content>
-															<p class="text-xs">删除</p>
-														</Tooltip.Content>
+
+														<Tooltip.Content><p class="text-xs">删除</p></Tooltip.Content>
 													</Tooltip.Root>
 												{/if}
 											</Table.Cell>
@@ -643,7 +499,9 @@
 					{:else}
 						<div class="flex flex-col items-center justify-center py-12">
 							<svelte:component this={config.icon} class="text-muted-foreground mb-4 h-12 w-12" />
+
 							<div class="text-muted-foreground mb-2 text-lg font-medium">暂无{config.label}</div>
+
 							<p class="text-muted-foreground mb-4 text-center text-sm">
 								{#if key === 'favorites'}
 									还没有添加任何收藏夹订阅
@@ -655,11 +513,11 @@
 									还没有添加稍后再看订阅
 								{/if}
 							</p>
+
 							{#if key === 'favorites' || key === 'collections' || key === 'submissions'}
-								<Button onclick={() => openAddDialog(key)} class="flex items-center gap-2">
-									<PlusIcon class="h-4 w-4" />
-									手动添加
-								</Button>
+								<Button onclick={() => openAddDialog(key)} class="flex items-center gap-2"
+									><PlusIcon class="h-4 w-4" />手动添加</Button
+								>
 							{/if}
 						</div>
 					{/if}
@@ -675,17 +533,21 @@
 	{/if}
 
 	<!-- 编辑对话框 -->
+
 	<Dialog.Root bind:open={showEditDialog}>
 		<Dialog.Content
 			class="no-scrollbar max-h-[85vh] max-w-[90vw]! overflow-y-auto lg:max-w-[70vw]!"
 		>
-			<Dialog.Title class="text-lg font-semibold">
-				编辑视频源: {editingSource?.name || ''}
-			</Dialog.Title>
+			<Dialog.Title class="text-lg font-semibold"
+				>编辑视频源: {editingSource?.name || ''}</Dialog.Title
+			>
+
 			<div class="mt-6 space-y-6">
 				<!-- 下载路径 -->
+
 				<div>
 					<Label for="edit-path" class="text-sm font-medium">下载路径</Label>
+
 					<Input
 						id="edit-path"
 						type="text"
@@ -696,6 +558,7 @@
 				</div>
 
 				<!-- 启用状态 -->
+
 				<div class="flex items-center space-x-2">
 					<Switch bind:checked={editForm.enabled} />
 					<Label class="text-sm font-medium">启用此视频源</Label>
@@ -704,17 +567,21 @@
 				{#if editingType === 'submissions' && editForm.useDynamicApi !== null}
 					<div class="flex items-center space-x-2">
 						<Switch bind:checked={editForm.useDynamicApi} />
+
 						<div class="flex items-center gap-1">
 							<Label class="text-sm font-medium">使用动态 API 获取视频</Label>
+
 							<Tooltip.Root>
-								<Tooltip.Trigger>
-									<InfoIcon class="text-muted-foreground h-3.5 w-3.5" />
-								</Tooltip.Trigger>
+								<Tooltip.Trigger
+									><InfoIcon class="text-muted-foreground h-3.5 w-3.5" /></Tooltip.Trigger
+								>
+
 								<Tooltip.Content>
 									<p class="text-xs">
 										只有使用动态 API 才能拉取到动态视频，但该接口不提供分页参数，每次请求只能拉取 12
-										条视频。<br />这会一定程度上增加请求次数，用户可根据实际情况酌情选择，推荐仅在
-										UP 主有较多动态视频时开启。
+										条视频。
+										<br />
+										这会一定程度上增加请求次数，用户可根据实际情况酌情选择，推荐仅在 UP 主有较多动态视频时开启。
 									</p>
 								</Tooltip.Content>
 							</Tooltip.Root>
@@ -723,6 +590,7 @@
 				{/if}
 
 				<!-- 规则编辑器 -->
+
 				<div>
 					<RuleEditor rule={editForm.rule} onRuleChange={(rule) => (editForm.rule = rule)} />
 				</div>
@@ -732,6 +600,7 @@
 						<Switch bind:checked={useCustomFilterOption} />
 						<Label class="text-sm font-medium">覆盖全局流设置</Label>
 					</div>
+
 					{#if editFilterOption}
 						<div class="border-muted ml-3 border-l-2 pl-6">
 							<FilterOptionEditor bind:value={editFilterOption} disabled={!useCustomFilterOption} />
@@ -739,13 +608,13 @@
 					{/if}
 				</div>
 			</div>
+
 			<div class="mt-8 flex justify-end gap-3">
-				<Button variant="outline" onclick={() => (showEditDialog = false)} disabled={saving}>
-					取消
-				</Button>
-				<Button onclick={saveEdit} disabled={saving}>
-					{saving ? '保存中...' : '保存'}
-				</Button>
+				<Button variant="outline" onclick={() => (showEditDialog = false)} disabled={saving}
+					>取消</Button
+				>
+
+				<Button onclick={saveEdit} disabled={saving}>{saving ? '保存中...' : '保存'}</Button>
 			</div>
 		</Dialog.Content>
 	</Dialog.Root>
@@ -754,13 +623,19 @@
 		<AlertDialog.Content>
 			<AlertDialog.Header>
 				<AlertDialog.Title>重新评估规则</AlertDialog.Title>
+
 				<AlertDialog.Description>
-					确定要重新评估视频源 <strong>"{evaluateSource?.name}"</strong> 的过滤规则吗？<br />
-					规则修改后默认仅对新视频生效，该操作可使用当前规则对数据库中已存在的历史视频进行重新评估，<span
-						class="text-destructive font-medium">无法撤销</span
-					>。<br />
+					确定要重新评估视频源
+					<strong>"{evaluateSource?.name}"</strong>
+					的过滤规则吗？
+					<br />
+					规则修改后默认仅对新视频生效，该操作可使用当前规则对数据库中已存在的历史视频进行重新评估，
+					<span class="text-destructive font-medium">无法撤销</span>
+					。
+					<br />
 				</AlertDialog.Description>
 			</AlertDialog.Header>
+
 			<AlertDialog.Footer>
 				<AlertDialog.Cancel
 					disabled={evaluating}
@@ -768,9 +643,10 @@
 						showEvaluateDialog = false;
 					}}>取消</AlertDialog.Cancel
 				>
-				<AlertDialog.Action onclick={evaluateRules} disabled={evaluating}>
-					{evaluating ? '重新评估中' : '确认重新评估'}
-				</AlertDialog.Action>
+
+				<AlertDialog.Action onclick={evaluateRules} disabled={evaluating}
+					>{evaluating ? '重新评估中' : '确认重新评估'}</AlertDialog.Action
+				>
 			</AlertDialog.Footer>
 		</AlertDialog.Content>
 	</AlertDialog.Root>
@@ -779,13 +655,19 @@
 		<AlertDialog.Content>
 			<AlertDialog.Header>
 				<AlertDialog.Title>删除视频源</AlertDialog.Title>
+
 				<AlertDialog.Description>
-					确定要删除视频源 <strong>"{removeSource?.name}"</strong> 吗？<br />
-					删除后该视频源相关的所有条目将从数据库中移除（不影响磁盘文件），该操作<span
-						class="text-destructive font-medium">无法撤销</span
-					>。<br />
+					确定要删除视频源
+					<strong>"{removeSource?.name}"</strong>
+					吗？
+					<br />
+					删除后该视频源相关的所有条目将从数据库中移除（不影响磁盘文件），该操作
+					<span class="text-destructive font-medium">无法撤销</span>
+					。
+					<br />
 				</AlertDialog.Description>
 			</AlertDialog.Header>
+
 			<AlertDialog.Footer>
 				<AlertDialog.Cancel
 					disabled={removing}
@@ -793,9 +675,10 @@
 						showRemoveDialog = false;
 					}}>取消</AlertDialog.Cancel
 				>
-				<AlertDialog.Action onclick={removeVideoSource} disabled={removing}>
-					{removing ? '删除中' : '删除'}
-				</AlertDialog.Action>
+
+				<AlertDialog.Action onclick={removeVideoSource} disabled={removing}
+					>{removing ? '删除中' : '删除'}</AlertDialog.Action
+				>
 			</AlertDialog.Footer>
 		</AlertDialog.Content>
 	</AlertDialog.Root>
@@ -804,26 +687,36 @@
 		<AlertDialog.Content>
 			<AlertDialog.Header>
 				<AlertDialog.Title>全量更新视频</AlertDialog.Title>
+
 				<AlertDialog.Description>
-					确定要全量更新视频源 <strong>"{fullSyncSource?.name}"</strong> 吗？<br />
-					该操作会获取该视频源下所有当前存在的视频，移除数据库中已不存在于该源的视频及其分页数据，<span
-						class="text-destructive font-medium">无法撤销</span
-					>。<br /><br />
-					请谨慎对“稍后再看”执行全量更新操作，因为其视频源本身就具有较强的时效性，执行全量更新可能导致大量视频被移除。<br
-					/>
+					确定要全量更新视频源
+					<strong>"{fullSyncSource?.name}"</strong>
+					吗？
+					<br />
+					该操作会获取该视频源下所有当前存在的视频，移除数据库中已不存在于该源的视频及其分页数据，
+					<span class="text-destructive font-medium">无法撤销</span>
+					。
+					<br />
+					<br />
+					请谨慎对“稍后再看”执行全量更新操作，因为其视频源本身就具有较强的时效性，执行全量更新可能导致大量视频被移除。
+					<br />
 				</AlertDialog.Description>
 			</AlertDialog.Header>
+
 			<div class="rounded-lg border border-orange-200 bg-orange-50 p-3">
 				<div class="mb-2 flex items-center space-x-2">
 					<Checkbox id="delete-local" bind:checked={fullSyncDeleteLocal} />
-					<Label for="delete-local" class="text-sm font-medium text-orange-700">
-						⚠️ 同时删除本地视频文件夹
-					</Label>
+
+					<Label for="delete-local" class="text-sm font-medium text-orange-700"
+						>⚠️ 同时删除本地视频文件夹</Label
+					>
 				</div>
+
 				<p class="text-xs leading-relaxed text-orange-700">
 					删除多余视频时同时删除视频对应的本地文件夹，请谨慎勾选
 				</p>
 			</div>
+
 			<AlertDialog.Footer>
 				<AlertDialog.Cancel
 					disabled={fullSyncing}
@@ -831,18 +724,19 @@
 						showFullSyncDialog = false;
 					}}>取消</AlertDialog.Cancel
 				>
+
 				<AlertDialog.Action
 					onclick={fullSyncVideoSource}
 					disabled={fullSyncing}
 					class="bg-amber-600 hover:bg-amber-700"
+					>{fullSyncing ? '全量更新中' : '确认全量更新'}</AlertDialog.Action
 				>
-					{fullSyncing ? '全量更新中' : '确认全量更新'}
-				</AlertDialog.Action>
 			</AlertDialog.Footer>
 		</AlertDialog.Content>
 	</AlertDialog.Root>
 
 	<!-- 添加对话框 -->
+
 	<Dialog.Root bind:open={showAddDialog}>
 		<Dialog.Content>
 			<Dialog.Title class="text-lg font-semibold">
@@ -854,11 +748,13 @@
 					添加用户投稿
 				{/if}
 			</Dialog.Title>
+
 			<div class="mt-4">
 				{#if addDialogType === 'favorites'}
 					<div class="space-y-4">
 						<div>
 							<Label for="fid" class="text-sm font-medium">收藏夹ID (fid)</Label>
+
 							<Input
 								id="fid"
 								type="number"
@@ -872,6 +768,7 @@
 					<div class="space-y-4">
 						<div>
 							<Label for="collection-type" class="text-sm font-medium">合集类型</Label>
+
 							<select
 								id="collection-type"
 								bind:value={collectionForm.collection_type}
@@ -881,13 +778,15 @@
 								<option value="2">合集 (Season)</option>
 							</select>
 						</div>
+
 						<div class="grid grid-cols-2 gap-4">
 							<div>
-								<Label for="sid" class="text-sm font-medium">
-									{collectionForm.collection_type === '1'
+								<Label for="sid" class="text-sm font-medium"
+									>{collectionForm.collection_type === '1'
 										? '列表ID (series_id)'
-										: '合集ID (season_id)'}
-								</Label>
+										: '合集ID (season_id)'}</Label
+								>
+
 								<Input
 									id="sid"
 									type="number"
@@ -898,8 +797,10 @@
 									class="mt-1"
 								/>
 							</div>
+
 							<div>
 								<Label for="mid" class="text-sm font-medium">用户ID (mid)</Label>
+
 								<Input
 									id="mid"
 									type="number"
@@ -909,12 +810,14 @@
 								/>
 							</div>
 						</div>
+
 						<p class="text-muted-foreground text-xs">可从合集/列表页面URL中获取相应ID</p>
 					</div>
 				{:else}
 					<div class="space-y-4">
 						<div>
 							<Label for="upper_id" class="text-sm font-medium">UP主ID (mid)</Label>
+
 							<Input
 								id="upper_id"
 								type="number"
@@ -925,8 +828,10 @@
 						</div>
 					</div>
 				{/if}
+
 				<div class="mt-4">
 					<Label for="path" class="text-sm font-medium">下载路径</Label>
+
 					{#if addDialogType === 'favorites'}
 						<Input
 							id="path"
@@ -954,18 +859,18 @@
 					{/if}
 				</div>
 			</div>
+
 			<div class="mt-6 flex justify-end gap-2">
 				<Button
 					variant="outline"
 					onclick={() => (showAddDialog = false)}
 					disabled={adding}
-					class="px-4"
+					class="px-4">取消</Button
 				>
-					取消
-				</Button>
-				<Button onclick={handleAdd} disabled={adding} class="px-4">
-					{adding ? '添加中...' : '添加'}
-				</Button>
+
+				<Button onclick={handleAdd} disabled={adding} class="px-4"
+					>{adding ? '添加中...' : '添加'}</Button
+				>
 			</div>
 		</Dialog.Content>
 	</Dialog.Root>

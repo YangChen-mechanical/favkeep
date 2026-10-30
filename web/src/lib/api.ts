@@ -22,6 +22,7 @@ import type {
 	Notifier,
 	NotifiersResponse,
 	Platform,
+	PlatformInfo,
 	QrcodePollResponse as PollQrcodeResponse,
 	ResetFilteredVideosResponse,
 	ResetFilteredVideoStatusRequest,
@@ -51,6 +52,9 @@ const API_BASE_URL = '/api';
 
 // HTTP 客户端类
 class ApiClient {
+	getPlatforms(): Promise<ApiResponse<PlatformInfo[]>> {
+		return this.get('/platforms');
+	}
 	private baseURL: string;
 	private defaultHeaders: Record<string, string>;
 
@@ -374,9 +378,12 @@ class ApiClient {
 	}
 
 	async generateQrcode(
-		platform: Platform = 'bilibili'
+		platform: Platform = 'bilibili',
+		forceQr = false
 	): Promise<ApiResponse<GenerateQrcodeResponse>> {
-		return this.post<GenerateQrcodeResponse>(`/login/qrcode/generate?platform=${platform}`);
+		return this.post<GenerateQrcodeResponse>(
+			`/login/qrcode/generate?platform=${platform}${forceQr ? '&force_qr=true' : ''}`
+		);
 	}
 
 	async pollQrcode(
@@ -402,6 +409,7 @@ export const apiClient = new ApiClient();
 
 // 导出 API 方法的便捷函数
 const api = {
+	getPlatforms: () => apiClient.getPlatforms(),
 	getVideoSources: () => apiClient.getVideoSources(),
 	getVideos: (params?: VideosRequest) => apiClient.getVideos(params),
 	getVideo: (id: number) => apiClient.getVideo(id),
@@ -453,7 +461,8 @@ const api = {
 	updateDouyinFolder: (id: string, enabled: boolean) => apiClient.updateDouyinFolder(id, enabled),
 	triggerDouyinTask: () => apiClient.triggerDouyinTask(),
 	resumeDouyin: () => apiClient.resumeDouyin(),
-	generateQrcode: (platform: Platform = 'bilibili') => apiClient.generateQrcode(platform),
+	generateQrcode: (platform: Platform = 'bilibili', forceQr = false) =>
+		apiClient.generateQrcode(platform, forceQr),
 	pollQrcode: (qrcodeKey: string, platform: Platform = 'bilibili') =>
 		apiClient.pollQrcode(qrcodeKey, platform),
 	subscribeToSysInfo: (onMessage: (data: SysInfo) => void) =>

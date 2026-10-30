@@ -13,8 +13,22 @@
 	import { Toaster } from '$lib/components/ui/sonner/index.js';
 	import { ModeWatcher } from 'mode-watcher';
 	import api from '$lib/api';
+	import { loadPlatforms } from '$lib/stores/platforms';
 	import { toast } from 'svelte-sonner';
 	let checked = false;
+	let catalogLoaded = false;
+	$: if (checked && $authSession?.authenticated && !catalogLoaded) {
+		void ensureCatalog();
+	}
+	async function ensureCatalog() {
+		catalogLoaded = true;
+		try {
+			await loadPlatforms();
+		} catch {
+			if ($authSession?.authenticated) sessionError = '平台列表加载失败，请重试。';
+		}
+	}
+	$: if (!$authSession?.authenticated) catalogLoaded = false;
 	let sessionError = '';
 	$: watching = $page.url.pathname === '/watch' || $page.url.pathname.startsWith('/watch/');
 	$: authPage = ['/login', '/setup'].includes($page.url.pathname);
@@ -32,7 +46,11 @@
 	async function checkSession() {
 		sessionError = '';
 		try {
-			await api.getSession();
+			const session = await api.getSession();
+			if (session.data.authenticated) {
+				catalogLoaded = true;
+				await ensureCatalog();
+			}
 			checked = true;
 		} catch {
 			sessionError = '无法连接认证服务，请检查连接后重试。';

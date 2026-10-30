@@ -1,6 +1,4 @@
-import type { Platform } from './types';
-
-export const platformLabels: Record<Platform, string> = { bilibili: 'B站', douyin: '抖音' };
+import type { MediaInfo } from './types';
 
 const douyinMessages: Record<string, string> = {
 	rejected: '平台拒绝了请求，请等待冷却后重试',
@@ -29,14 +27,8 @@ export function douyinMessage(code: string): string {
 	return Object.hasOwn(douyinMessages, code) ? douyinMessages[code] : '需要检查';
 }
 
-export function sourceVideoUrl(video: {
-	platform: Platform;
-	platform_id: string | null;
-	bvid?: string | null;
-}): string | null {
-	const id = video.platform === 'douyin' ? video.platform_id : video.bvid;
-	if (!id) return null;
-	return video.platform === 'douyin'
-		? `https://www.douyin.com/video/${encodeURIComponent(id)}`
-		: `https://www.bilibili.com/video/${encodeURIComponent(id)}/`;
+export function biliStatuses(media: Pick<MediaInfo, 'platform_details'>): number[] {
+	return media.platform_details.platform === 'bilibili'
+		? media.platform_details.download_status
+		: [];
 }

@@ -1,9 +1,9 @@
 <script lang="ts">
+	import { platformLabels } from '$lib/stores/platforms';
 	import PlayIcon from '@lucide/svelte/icons/play';
 	import CheckIcon from '@lucide/svelte/icons/check';
 	import CoverImage from './cover-image.svelte';
 	import { formatTime, playbackUrl } from '$lib/watch';
-	import { platformLabels } from '$lib/platform';
 	import type { VideoInfo, WatchSummary } from '$lib/types';
 	export let video: VideoInfo;
 	export let summary: WatchSummary | undefined;
@@ -29,7 +29,7 @@
 	<div class="caption">
 		<h3>{video.name}</h3>
 		<div class="meta">
-			<span>{video.upper_name}</span><span class="platform">{platformLabels[video.platform]}</span
+			<span>{video.upper_name}</span><span class="platform">{$platformLabels[video.platform]}</span
 			>{#if summary?.watch_state === 'in_progress'}<span class="in-progress">进行中</span
 				>{:else if summary?.watch_state === 'unwatched'}<span class="unwatched">未看</span>{/if}
 		</div>
