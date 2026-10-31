@@ -182,6 +182,8 @@ pub struct PollQrcodeRequest {
     pub qrcode_key: String,
     #[serde(default)]
     pub platform: LoginPlatform,
+    #[serde(default)]
+    pub cancel: bool,
 }
 
 pub use crate::platform::Platform as LoginPlatform;

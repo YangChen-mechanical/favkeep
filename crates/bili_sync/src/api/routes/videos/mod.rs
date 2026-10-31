@@ -77,7 +77,9 @@ async fn enrich_pages(db: &DatabaseConnection, platform: &str, pages: &mut [Page
                 }),
                 ..Default::default()
             },
-            Platform::Douyin => media::page_info(db, platform, page.id, page.download_status).await?,
+            Platform::Douyin | Platform::Xiaohongshu => {
+                media::page_info(db, platform, page.id, page.download_status).await?
+            }
         };
     }
     Ok(())
@@ -251,6 +253,27 @@ pub async fn reset_video_status(
     };
     match Platform::parse(&video_info.platform)? {
         Platform::Bilibili => {}
+        Platform::Xiaohongshu => {
+            if request.force {
+                return Err(InnerApiError::BadRequest("小红书仅支持重试失败下载".into()).into());
+            }
+            let _guard = crate::xiaohongshu::RUNNING
+                .try_lock()
+                .map_err(|_| InnerApiError::BadRequest("小红书账号正在处理任务".into()))?;
+            if !crate::xiaohongshu::store::can_retry(&db, id).await? {
+                return Err(InnerApiError::BadRequest("该视频当前不允许重试".into()).into());
+            }
+            let count = crate::xiaohongshu::store::retry_failed(&db, Some(id)).await?;
+            let mut video = video_info;
+            enrich_video(&db, &mut video).await?;
+            let mut pages = pages_info;
+            enrich_pages(&db, &video.platform, &mut pages).await?;
+            return Ok(ApiResponse::ok(ResetVideoResponse {
+                video,
+                pages,
+                resetted: count > 0,
+            }));
+        }
         Platform::Douyin => {
             info!("[抖音] 收到重试视频请求，本地视频编号 {}", id);
             if request.force {
@@ -625,12 +648,19 @@ mod tests {
     async fn mixed_platform_states_and_playability_filter_before_pagination() {
         let db = Database::connect("sqlite::memory:").await.unwrap();
         Migrator::up(&db, None).await.unwrap();
-        for id in 1..=6 {
+        for id in 1..=9 {
             let bili = id <= 3;
             let offset = (id - 1) % 3;
             video::ActiveModel::from(video::Model {
                 id,
-                platform: if bili { "bilibili" } else { "douyin" }.into(),
+                platform: if bili {
+                    "bilibili"
+                } else if id <= 6 {
+                    "douyin"
+                } else {
+                    "xiaohongshu"
+                }
+                .into(),
                 platform_id: Some(format!("item{offset}")),
                 bvid: bili.then(|| format!("item{offset}")),
                 name: format!("Video {id}"),
@@ -657,7 +687,12 @@ mod tests {
             .unwrap();
             if !bili {
                 db.execute_unprepared(&format!(
-                    "INSERT INTO douyin_download(page_id,state,failures) VALUES({id},'{}',{})",
+                    "INSERT INTO {}(page_id,state,failures) VALUES({id},'{}',{})",
+                    if id <= 6 {
+                        "douyin_download"
+                    } else {
+                        "xiaohongshu_download"
+                    },
                     ["waiting", "failed", "succeeded"][offset as usize],
                     i32::from(offset == 1)
                 ))
@@ -667,20 +702,29 @@ mod tests {
         }
         for state in ["waiting", "failed", "succeeded"] {
             let result = list(&db, &format!("status_filter={state}&page=0&page_size=1")).await;
-            assert_eq!(result["total_count"], 2);
+            assert_eq!(result["total_count"], 3);
             assert_eq!(result["videos"].as_array().unwrap().len(), 1);
             assert_eq!(result["videos"][0]["download_state"], state);
         }
         let saved = list(&db, "saved_only=true&page=0&page_size=1").await;
-        assert_eq!(saved["total_count"], 3);
-        assert_eq!(saved["videos"][0]["platform"], "douyin");
+        assert_eq!(saved["total_count"], 4);
+        assert_eq!(saved["videos"][0]["platform"], "xiaohongshu");
         assert_eq!(saved["videos"][0]["media_ready"], true);
         assert!(saved["videos"][0].get("download_status").is_none());
         assert!(saved["videos"][0]["platform_details"].get("download_status").is_none());
         let failed = list(&db, "platform=bilibili&status_filter=failed&saved_only=true").await;
         assert_eq!(failed["total_count"], 1);
         assert_eq!(failed["videos"][0]["media_ready"], true);
-        assert_eq!(list(&db, "query=item0").await["total_count"], 2);
+        assert_eq!(list(&db, "query=item0").await["total_count"], 3);
+        for platform in ["bilibili", "douyin", "xiaohongshu"] {
+            let value = list(
+                &db,
+                &format!("platform={platform}&status_filter=failed&page=0&page_size=1"),
+            )
+            .await;
+            assert_eq!(value["total_count"], 1);
+            assert_eq!(value["videos"][0]["platform"], platform);
+        }
         let response = router()
             .layer(Extension(db))
             .oneshot(

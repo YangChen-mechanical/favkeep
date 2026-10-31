@@ -12,6 +12,7 @@ mod video_sources;
 mod videos;
 mod watch_progress;
 mod ws;
+mod xiaohongshu;
 
 pub use ws::{LogHelper, MAX_HISTORY_LOGS};
 
@@ -24,6 +25,7 @@ pub fn router() -> Router {
                 axum::routing::get(|| async { crate::api::wrapper::ApiResponse::ok(crate::platform::platforms()) }),
             )
             .merge(douyin::router())
+            .merge(xiaohongshu::router())
             .merge(me::router())
             .merge(login::router())
             .merge(video_sources::router())

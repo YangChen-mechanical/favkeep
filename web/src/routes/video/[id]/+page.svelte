@@ -216,13 +216,15 @@
 				</Button>
 			</div>
 		</div>
-		{#if videoData.video.allowed_actions.includes('retry_failed') && videoData.video.platform === 'douyin'}<Button
+		{#if videoData.video.allowed_actions.includes('retry_failed') && videoData.video.platform !== 'bilibili'}<Button
 				size="sm"
 				variant="outline"
 				onclick={() => handleReset(false)}>重试失败下载</Button
 			>{/if}
-		{#if videoData.video.platform === 'douyin'}<p class="text-muted-foreground mb-4 text-sm">
-				抖音仅保存视频内容。下载失败时，请到平台的同步任务中重试；暂停时先验证连接并恢复。
+		{#if videoData.video.platform !== 'bilibili'}<p class="text-muted-foreground mb-4 text-sm">
+				{$platformLabels[
+					videoData.video.platform
+				]}仅保存视频内容。下载失败时，请到平台的同步任务中重试；暂停时先验证连接并恢复。
 			</p>{/if}
 
 		<div style="margin-bottom: 1rem;">
@@ -246,7 +248,7 @@
 			<div>
 				<div class="mb-4 flex items-center justify-between">
 					<h2 class="text-xl font-semibold">
-						{videoData.video.platform === 'douyin' ? '视频文件' : '分页列表'}
+						{videoData.video.platform !== 'bilibili' ? '视频文件' : '分页列表'}
 					</h2>
 					<div class="text-muted-foreground text-sm">
 						共 {videoData.pages.length} 个分页

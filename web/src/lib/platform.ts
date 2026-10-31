@@ -32,3 +32,10 @@ export function biliStatuses(media: Pick<MediaInfo, 'platform_details'>): number
 		? media.platform_details.download_status
 		: [];
 }
+
+export function xiaohongshuMessage(code: string): string {
+	return douyinMessage(code)
+		.replaceAll('抖音', '小红书')
+		.replaceAll('收藏夹', '收藏窗口')
+		.replaceAll('选择已变化', '来源已变化');
+}

@@ -456,3 +456,53 @@ async fn secure_cookie_origin_and_socket_revocation() {
         .unwrap()
         .unwrap();
 }
+
+#[tokio::test]
+async fn xiaohongshu_routes_are_protected_and_status_reads_do_not_create_records() {
+    let (app, state, _dir) = fixture().await;
+    for path in ["/api/xiaohongshu/status", "/api/video-sources/xiaohongshu"] {
+        assert_eq!(
+            call(&app, "GET", path, Value::Null, None, None, None).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    let login = initialize(&app, &state).await;
+    for path in ["/api/xiaohongshu/status", "/api/video-sources/xiaohongshu"] {
+        assert_eq!(
+            call(&app, "GET", path, Value::Null, Some(&login), None, None).await.0,
+            StatusCode::OK
+        );
+    }
+    for (method, path) in [
+        ("POST", "/api/xiaohongshu/resume"),
+        ("POST", "/api/task/xiaohongshu"),
+        ("PUT", "/api/config/xiaohongshu"),
+        ("PUT", "/api/video-sources/xiaohongshu"),
+    ] {
+        assert_eq!(
+            call(&app, method, path, json!({}), Some(&login), None, Some(ORIGIN))
+                .await
+                .0,
+            StatusCode::FORBIDDEN
+        );
+    }
+    let row = state
+        .db
+        .query_one(statement(
+            "SELECT (SELECT COUNT(*) FROM xiaohongshu_account)+(SELECT COUNT(*) FROM xiaohongshu_source) AS n",
+            vec![],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.try_get::<i64>("", "n").unwrap(), 0);
+    let (_, _, catalog) = call(&app, "GET", "/api/platforms", Value::Null, Some(&login), None, None).await;
+    assert_eq!(catalog["data"].as_array().unwrap().len(), 3);
+    assert!(
+        catalog["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == "xiaohongshu")
+    );
+}

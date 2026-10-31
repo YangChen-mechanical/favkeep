@@ -1,9 +1,11 @@
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use crate::media_file::parse_media;
+use crate::media_file::{available_space, inspect, ready_part};
+use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use sea_orm::DatabaseConnection;
-use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 
 use super::browser::{Auth, Session, private_dir, write_private};
@@ -383,12 +385,7 @@ async fn save(client: &Client, id: &str, root: &Path) -> Result<(Outcome, SaveKi
                 let details = client.detail(id).await?;
                 title = details.title;
                 author = details.author;
-                if let Ok(metadata) = tokio::fs::symlink_metadata(&part).await {
-                    if !metadata.is_file() || metadata.file_type().is_symlink() {
-                        return Err(Error::File);
-                    }
-                    tokio::fs::remove_file(&part).await.map_err(Error::from)?;
-                }
+                crate::media_file::discard_partial(&part, &ready).await?;
                 let transfer = crate::resources::acquire(&crate::resources::TRANSFERS, "抖音视频传输").await;
                 let response = client
                     .media_response(details.urls.first().ok_or(Error::MediaUnavailable)?)
@@ -424,24 +421,7 @@ async fn save(client: &Client, id: &str, root: &Path) -> Result<(Outcome, SaveKi
                 info
             }
         };
-        // Hard-link publishes on the same disk without overwriting an existing finished file.
-        match tokio::fs::hard_link(&part, &final_path).await {
-            Ok(()) => (),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                inspect(&final_path).await?;
-            }
-            Err(error) => return Err(Error::from(error)),
-        }
-        tokio::fs::remove_file(&part).await.map_err(Error::from)?;
-        let _ = tokio::fs::remove_file(&ready).await;
-        #[cfg(unix)]
-        {
-            let directory = directory.clone();
-            tokio::task::spawn_blocking(move || std::fs::File::open(directory)?.sync_all())
-                .await
-                .map_err(|_| Error::File)?
-                .map_err(Error::from)?;
-        }
+        crate::media_file::publish(&part, &ready, &final_path).await?;
         info
     };
     let poster = directory.join("poster.jpg");
@@ -470,101 +450,6 @@ async fn save(client: &Client, id: &str, root: &Path) -> Result<(Outcome, SaveKi
         },
         kind,
     ))
-}
-
-async fn ready_part(part: &Path, ready: &Path) -> bool {
-    let Ok(metadata) = tokio::fs::symlink_metadata(part).await else {
-        return false;
-    };
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
-        return false;
-    }
-    let Ok(marker) = tokio::fs::read(ready).await else {
-        return false;
-    };
-    serde_json::from_slice::<Value>(&marker)
-        .ok()
-        .and_then(|v| v["bytes"].as_u64())
-        == Some(metadata.len())
-}
-
-fn available_space(path: &Path) -> Result<u64> {
-    let path = path.canonicalize().map_err(Error::from)?;
-    sysinfo::Disks::new_with_refreshed_list()
-        .iter()
-        .filter(|d| {
-            d.mount_point()
-                .canonicalize()
-                .is_ok_and(|mount| path.starts_with(mount))
-        })
-        .max_by_key(|d| d.mount_point().as_os_str().len())
-        .map(|d| d.available_space())
-        .ok_or(Error::File)
-}
-
-struct MediaInfo {
-    duration: u32,
-    width: u32,
-    height: u32,
-}
-
-fn ffprobe() -> PathBuf {
-    ARGS.ffmpeg_path
-        .as_ref()
-        .map(|p| Path::new(p).with_file_name(if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" }))
-        .unwrap_or_else(|| "ffprobe".into())
-}
-
-async fn inspect(path: &Path) -> Result<MediaInfo> {
-    let metadata = tokio::fs::symlink_metadata(path).await.map_err(Error::from)?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() == 0 {
-        return Err(Error::MediaUnavailable);
-    }
-    let _process = crate::resources::acquire(&crate::resources::MEDIA_PROCESSES, "视频校验").await;
-    let output = tokio::time::timeout(
-        Duration::from_secs(30),
-        tokio::process::Command::new(ffprobe())
-            .args(["-v", "error", "-show_streams", "-show_format", "-of", "json"])
-            .arg(path)
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .map_err(|_| Error::MediaUnavailable)?
-    .map_err(|_| Error::MediaUnavailable)?;
-    if !output.status.success() {
-        return Err(Error::MediaUnavailable);
-    }
-    parse_media(&serde_json::from_slice::<Value>(&output.stdout).map_err(|_| Error::MediaUnavailable)?)
-}
-
-fn parse_media(info: &Value) -> Result<MediaInfo> {
-    let video = info["streams"]
-        .as_array()
-        .and_then(|s| s.iter().find(|s| s["codec_type"] == "video"))
-        .ok_or(Error::MediaUnavailable)?;
-    let duration = info["format"]["duration"]
-        .as_str()
-        .and_then(|v| v.parse::<f64>().ok())
-        .ok_or(Error::MediaUnavailable)?;
-    let width = video["width"]
-        .as_u64()
-        .and_then(|n| u32::try_from(n).ok())
-        .filter(|n| *n > 0)
-        .ok_or(Error::MediaUnavailable)?;
-    let height = video["height"]
-        .as_u64()
-        .and_then(|n| u32::try_from(n).ok())
-        .filter(|n| *n > 0)
-        .ok_or(Error::MediaUnavailable)?;
-    if !duration.is_finite() || duration <= 0.0 || duration > u32::MAX as f64 {
-        return Err(Error::MediaUnavailable);
-    }
-    Ok(MediaInfo {
-        duration: duration.ceil() as u32,
-        width,
-        height,
-    })
 }
 
 pub fn next_run() -> Option<String> {

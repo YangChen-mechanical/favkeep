@@ -20,6 +20,7 @@ impl StatusFilter {
         Condition::any()
             .add(Condition::all().add(video::Column::Platform.eq("bilibili")).add(bili))
             .add(Expr::cust(format!("video.platform='douyin' AND EXISTS (SELECT 1 FROM page p JOIN douyin_download d ON d.page_id=p.id WHERE p.video_id=video.id AND d.state='{state}')")))
+            .add(Expr::cust(format!("video.platform='xiaohongshu' AND EXISTS (SELECT 1 FROM page p JOIN xiaohongshu_download d ON d.page_id=p.id WHERE p.video_id=video.id AND d.state='{state}')")))
     }
 }
 

@@ -31,6 +31,13 @@ pub async fn generate_qrcode(
     Query(params): Query<GenerateQrcodeRequest>,
 ) -> Result<ApiResponse<GenerateQrcodeResponse>, ApiError> {
     match params.platform {
+        LoginPlatform::Xiaohongshu => {
+            return Ok(ApiResponse::ok(
+                crate::xiaohongshu::login::generate(identity.0, auth_state)
+                    .await
+                    .map_err(xiaohongshu_error)?,
+            ));
+        }
         LoginPlatform::Douyin => {
             return Ok(ApiResponse::ok(
                 douyin::login::generate(identity.0, auth_state, params.force_qr)
@@ -61,6 +68,16 @@ pub async fn poll_qrcode(
     ValidatedJson(params): ValidatedJson<PollQrcodeRequest>,
 ) -> Result<ApiResponse<Value>, ApiError> {
     match params.platform {
+        LoginPlatform::Xiaohongshu => {
+            let result = if params.cancel {
+                crate::xiaohongshu::login::cancel(&identity.0, &params.qrcode_key).await
+            } else {
+                crate::xiaohongshu::login::poll(&identity.0, &params.qrcode_key).await
+            };
+            return Ok(ApiResponse::ok(serde_json::to_value(
+                result.map_err(xiaohongshu_error)?,
+            )?));
+        }
         LoginPlatform::Douyin => {
             return Ok(ApiResponse::ok(serde_json::to_value(
                 douyin::login::poll(&identity.0, &params.qrcode_key)
@@ -97,6 +114,13 @@ fn douyin_error(error: douyin::Error) -> InnerApiError {
         }
         .into(),
     )
+}
+
+fn xiaohongshu_error(error: crate::xiaohongshu::Error) -> InnerApiError {
+    InnerApiError::BadRequest(match error {
+        douyin::Error::InvalidData => "二维码不属于当前登录会话，请重新生成".into(),
+        _ => error.message().into(),
+    })
 }
 
 #[cfg(test)]

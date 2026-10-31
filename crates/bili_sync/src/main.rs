@@ -10,11 +10,13 @@ mod douyin;
 mod downloader;
 mod error;
 mod media;
+mod media_file;
 mod notifier;
 mod platform;
 mod resources;
 mod task;
 mod utils;
+mod xiaohongshu;
 
 use std::collections::VecDeque;
 use std::fmt::Debug;

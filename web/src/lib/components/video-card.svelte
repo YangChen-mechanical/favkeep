@@ -92,7 +92,7 @@
 	}
 
 	function getTaskName(index: number): string {
-		if (video.platform === 'douyin') return '视频内容';
+		if (video.platform !== 'bilibili') return '视频内容';
 		if (taskNames.length > 0) {
 			return taskNames[index] || `任务${index + 1}`;
 		}

@@ -43,7 +43,9 @@ import type {
 	VideosRequest,
 	VideosResponse,
 	WatchProgress,
-	WatchProgressUpdate
+	WatchProgressUpdate,
+	XiaohongshuSource,
+	XiaohongshuStatus
 } from './types';
 import { wsManager } from './ws';
 
@@ -377,6 +379,28 @@ class ApiClient {
 		return this.post('/douyin/resume');
 	}
 
+	async getXiaohongshuStatus(): Promise<ApiResponse<XiaohongshuStatus>> {
+		return this.get('/xiaohongshu/status');
+	}
+	async updateXiaohongshuConfig(interval: number): Promise<ApiResponse<XiaohongshuStatus>> {
+		return this.put('/config/xiaohongshu', { interval });
+	}
+	async getXiaohongshuSource(): Promise<ApiResponse<XiaohongshuSource>> {
+		return this.get('/video-sources/xiaohongshu');
+	}
+	async updateXiaohongshuSource(enabled: boolean): Promise<ApiResponse<XiaohongshuSource>> {
+		return this.put('/video-sources/xiaohongshu', { enabled });
+	}
+	async triggerXiaohongshuTask(): Promise<ApiResponse<boolean>> {
+		return this.post('/task/xiaohongshu');
+	}
+	async resumeXiaohongshu(): Promise<ApiResponse<unknown>> {
+		return this.post('/xiaohongshu/resume');
+	}
+	async cancelQrcode(qrcodeKey: string, platform: Platform): Promise<ApiResponse<unknown>> {
+		return this.post('/login/qrcode/poll', { qrcode_key: qrcodeKey, platform, cancel: true });
+	}
+
 	async generateQrcode(
 		platform: Platform = 'bilibili',
 		forceQr = false
@@ -409,6 +433,13 @@ export const apiClient = new ApiClient();
 
 // 导出 API 方法的便捷函数
 const api = {
+	getXiaohongshuStatus: () => apiClient.getXiaohongshuStatus(),
+	updateXiaohongshuConfig: (interval: number) => apiClient.updateXiaohongshuConfig(interval),
+	getXiaohongshuSource: () => apiClient.getXiaohongshuSource(),
+	updateXiaohongshuSource: (enabled: boolean) => apiClient.updateXiaohongshuSource(enabled),
+	triggerXiaohongshuTask: () => apiClient.triggerXiaohongshuTask(),
+	resumeXiaohongshu: () => apiClient.resumeXiaohongshu(),
+	cancelQrcode: (key: string, platform: Platform) => apiClient.cancelQrcode(key, platform),
 	getPlatforms: () => apiClient.getPlatforms(),
 	getVideoSources: () => apiClient.getVideoSources(),
 	getVideos: (params?: VideosRequest) => apiClient.getVideos(params),

@@ -31,6 +31,7 @@ pub struct MediaInfo {
 pub enum PlatformDetails {
     Bilibili { download_status: [u32; 5] },
     Douyin { failures: u32 },
+    Xiaohongshu { failures: u32 },
 }
 
 pub fn bili_state(status: u32) -> DownloadState {
@@ -63,11 +64,18 @@ pub async fn page_info(db: &DatabaseConnection, platform: Platform, id: i32, sta
                 download_status: crate::utils::status::PageStatus::from(status).into(),
             },
         ),
-        Platform::Douyin => {
+        Platform::Douyin | Platform::Xiaohongshu => {
             let row = db
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
-                    "SELECT state,failures FROM douyin_download WHERE page_id=?",
+                    format!(
+                        "SELECT state,failures FROM {} WHERE page_id=?",
+                        if platform == Platform::Douyin {
+                            "douyin_download"
+                        } else {
+                            "xiaohongshu_download"
+                        }
+                    ),
                     [id.into()],
                 ))
                 .await?
@@ -81,8 +89,14 @@ pub async fn page_info(db: &DatabaseConnection, platform: Platform, id: i32, sta
             };
             (
                 state,
-                PlatformDetails::Douyin {
-                    failures: row.try_get("", "failures")?,
+                if platform == Platform::Douyin {
+                    PlatformDetails::Douyin {
+                        failures: row.try_get("", "failures")?,
+                    }
+                } else {
+                    PlatformDetails::Xiaohongshu {
+                        failures: row.try_get("", "failures")?,
+                    }
                 },
             )
         }
@@ -113,7 +127,7 @@ pub async fn video_info(db: &DatabaseConnection, video: &video::Model, platform:
             });
             actions.extend(["retry_failed", "force_retry", "status_edit", "clear_redownload"]);
         }
-        Platform::Douyin => {
+        Platform::Douyin | Platform::Xiaohongshu => {
             let page = page::Entity::find()
                 .filter(page::Column::VideoId.eq(video.id))
                 .one(db)
@@ -122,7 +136,11 @@ pub async fn video_info(db: &DatabaseConnection, video: &video::Model, platform:
             let info = page_info(db, platform, page.id, page.download_status).await?;
             state = info.download_state;
             details = info.platform_details;
-            if crate::douyin::store::can_retry(db, video.id).await? {
+            if if platform == Platform::Douyin {
+                crate::douyin::store::can_retry(db, video.id).await?
+            } else {
+                crate::xiaohongshu::store::can_retry(db, video.id).await?
+            } {
                 actions.push("retry_failed");
             }
         }
@@ -144,9 +162,7 @@ mod tests {
 
     async fn legacy() -> DatabaseConnection {
         let db = Database::connect("sqlite::memory:").await.unwrap();
-        Migrator::up(&db, Some((Migrator::migrations().len() - 1) as u32))
-            .await
-            .unwrap();
+        Migrator::up(&db, Some(17)).await.unwrap();
         db
     }
 

@@ -33,7 +33,7 @@ export interface VideoSourcesResponse {
 	watch_later: VideoSource[];
 }
 
-export type Platform = 'bilibili' | 'douyin';
+export type Platform = 'bilibili' | 'douyin' | 'xiaohongshu';
 export interface PlatformInfo {
 	id: Platform;
 	name: string;
@@ -42,7 +42,8 @@ export interface PlatformInfo {
 export type DownloadState = 'waiting' | 'succeeded' | 'failed';
 export type PlatformDetails =
 	| { platform: 'bilibili'; download_status: [number, number, number, number, number] }
-	| { platform: 'douyin'; failures: number };
+	| { platform: 'douyin'; failures: number }
+	| { platform: 'xiaohongshu'; failures: number };
 export interface MediaInfo {
 	download_state: DownloadState;
 	media_ready: boolean;
@@ -416,6 +417,7 @@ export interface NotifiersResponse {
 export type Trigger = number | string;
 
 export interface Config {
+	xiaohongshu: { interval: number; browser: string; path: string };
 	bind_address: string;
 	credential_configured: boolean;
 	filter_option: FilterOption;
@@ -509,6 +511,60 @@ export interface DouyinStatus {
 		next_run: string | null;
 		last_error: string | null;
 	};
+}
+
+export interface XiaohongshuStatus {
+	connected: boolean;
+	window_size: number;
+	next_allowed_at: string | null;
+	account_name: string | null;
+	auth_state: 'disconnected' | 'connected' | 'paused';
+	interval: number;
+	paused_reason: string | null;
+	rejections: number;
+	task: {
+		is_running: boolean;
+		current?: {
+			operation: 'login' | 'refresh' | 'sync' | 'resume';
+			stage: string;
+			folder: string | null;
+			video: string | null;
+		} | null;
+		last_sync?: {
+			window_size: number;
+			baseline: boolean;
+			rebased: boolean;
+			started_at: string;
+			finished_at: string | null;
+			scanned: number;
+			historical: number;
+			existing: number;
+			unsupported: number;
+			inserted: number;
+			downloaded: number;
+			reused: number;
+			recovered: number;
+			failed: number;
+			pending: number | null;
+			error: string | null;
+		} | null;
+		last_run: string | null;
+		last_finish: string | null;
+		next_run: string | null;
+		last_error: string | null;
+	};
+}
+
+export interface XiaohongshuSource {
+	name: string;
+	enabled: boolean;
+	revision: number;
+	baseline_done: boolean;
+	baseline_at: number | null;
+	last_scan: number | null;
+	last_result: string | null;
+	item_count: number;
+	window_size: number;
 }
 
 export interface DouyinFolder {

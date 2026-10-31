@@ -10,6 +10,7 @@ pub enum Platform {
     #[default]
     Bilibili,
     Douyin,
+    Xiaohongshu,
 }
 
 impl Platform {
@@ -17,6 +18,7 @@ impl Platform {
         match value {
             "bilibili" => Ok(Self::Bilibili),
             "douyin" => Ok(Self::Douyin),
+            "xiaohongshu" => Ok(Self::Xiaohongshu),
             _ => Err(UnsupportedPlatform),
         }
     }
@@ -25,6 +27,7 @@ impl Platform {
         match self {
             Self::Bilibili => "bilibili",
             Self::Douyin => "douyin",
+            Self::Xiaohongshu => "xiaohongshu",
         }
     }
 
@@ -34,6 +37,7 @@ impl Platform {
         let base = match self {
             Self::Bilibili => "https://www.bilibili.com/video/",
             Self::Douyin => "https://www.douyin.com/video/",
+            Self::Xiaohongshu => "https://www.xiaohongshu.com/explore/",
         };
         let mut url = reqwest::Url::parse(base).expect("static URL");
         {
@@ -54,7 +58,7 @@ pub struct PlatformInfo {
     pub capabilities: &'static [&'static str],
 }
 
-pub fn platforms() -> [PlatformInfo; 2] {
+pub fn platforms() -> [PlatformInfo; 3] {
     [
         PlatformInfo {
             id: Platform::Bilibili,
@@ -69,6 +73,11 @@ pub fn platforms() -> [PlatformInfo; 2] {
                 "download_settings",
                 "qr_refresh",
             ],
+        },
+        PlatformInfo {
+            id: Platform::Xiaohongshu,
+            name: "小红书",
+            capabilities: &["retry_failed"],
         },
         PlatformInfo {
             id: Platform::Douyin,

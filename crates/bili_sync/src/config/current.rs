@@ -32,6 +32,8 @@ pub struct Config {
     pub credential: Credential,
     #[serde(default)]
     pub douyin: DouyinConfig,
+    #[serde(default)]
+    pub xiaohongshu: XiaohongshuConfig,
     pub filter_option: FilterOption,
     pub danmaku_option: DanmakuOption,
     #[serde(default)]
@@ -83,6 +85,24 @@ impl Default for DouyinConfig {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct XiaohongshuConfig {
+    pub interval: u64,
+    pub browser: String,
+    pub path: String,
+}
+
+impl Default for XiaohongshuConfig {
+    fn default() -> Self {
+        Self {
+            interval: 1800,
+            browser: DouyinConfig::default().browser,
+            path: CONFIG_DIR.join("xiaohongshu-media").to_string_lossy().into_owned(),
+        }
+    }
+}
+
 impl Config {
     pub async fn load_from_database(connection: &DatabaseConnection) -> Result<Option<Result<Self>>> {
         load_db_config(connection).await
@@ -93,6 +113,12 @@ impl Config {
     }
 
     pub fn check(&self) -> Result<()> {
+        if !(61..=31_536_000).contains(&self.xiaohongshu.interval)
+            || !PathBuf::from(&self.xiaohongshu.path).is_absolute()
+            || !PathBuf::from(&self.xiaohongshu.browser).is_absolute()
+        {
+            bail!("小红书间隔或路径配置无效");
+        }
         let mut errors = Vec::new();
         if !(61..=31_536_000).contains(&self.douyin.interval) {
             errors.push("抖音同步间隔必须大于 60 秒且不超过一年");
@@ -150,6 +176,7 @@ impl Default for Config {
             bind_address: default_bind_address(),
             credential: Credential::default(),
             douyin: DouyinConfig::default(),
+            xiaohongshu: XiaohongshuConfig::default(),
             filter_option: FilterOption::default(),
             danmaku_option: DanmakuOption::default(),
             danmaku_update_policy: DanmakuUpdatePolicy::default(),
@@ -181,8 +208,11 @@ mod tests {
     fn legacy_config_defaults_douyin_and_invalid_paths_or_interval_fail_validation() {
         let mut value = serde_json::to_value(Config::default()).unwrap();
         value.as_object_mut().unwrap().remove("douyin");
+        value.as_object_mut().unwrap().remove("xiaohongshu");
         let mut config: Config = serde_json::from_value(value).unwrap();
         assert_eq!(config.douyin.interval, 1800);
+        assert_eq!(config.xiaohongshu.interval, 1800);
+        assert!(PathBuf::from(&config.xiaohongshu.path).is_absolute());
         assert!(PathBuf::from(&config.douyin.browser).is_absolute());
         assert!(PathBuf::from(&config.douyin.path).is_absolute());
         assert!(config.check().is_ok());

@@ -45,6 +45,7 @@ struct TaskContext {
     status_rx: watch::Receiver<TaskStatus>,
     video_task_id: tokio::sync::Mutex<Option<uuid::Uuid>>, // 存储当前视频下载任务的 UUID
     douyin_task_id: tokio::sync::Mutex<Option<uuid::Uuid>>,
+    xiaohongshu_task_id: tokio::sync::Mutex<Option<uuid::Uuid>>,
 }
 
 impl DownloadTaskManager {
@@ -143,6 +144,67 @@ impl DownloadTaskManager {
         Ok(())
     }
 
+    pub async fn xiaohongshu_once(&self) -> Result<()> {
+        self.sched
+            .lock()
+            .await
+            .add(Job::new_one_shot_async(
+                Duration::ZERO,
+                Self::xiaohongshu_task(self.cx.clone()),
+            )?)
+            .await?;
+        Ok(())
+    }
+
+    fn xiaohongshu_task(
+        cx: Arc<TaskContext>,
+    ) -> impl FnMut(uuid::Uuid, JobScheduler) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        move |_, mut scheduler| {
+            let cx = cx.clone();
+            Box::pin(async move {
+                let config = VersionedConfig::get().snapshot();
+                let _ = crate::xiaohongshu::runtime::run(&cx.connection, &config).await;
+                if let Some(id) = *cx.xiaohongshu_task_id.lock().await {
+                    let next = scheduler
+                        .next_tick_for_job(id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|v| v.timestamp())
+                        .unwrap_or(0);
+                    crate::xiaohongshu::runtime::NEXT_RUN.store(next, std::sync::atomic::Ordering::Relaxed);
+                }
+            })
+        }
+    }
+
+    async fn schedule_xiaohongshu(
+        sched: &tokio::sync::Mutex<JobScheduler>,
+        cx: Arc<TaskContext>,
+        seconds: u64,
+    ) -> Result<()> {
+        let mut scheduler = sched.lock().await;
+        let mut current = cx.xiaohongshu_task_id.lock().await;
+        if let Some(id) = *current {
+            scheduler.remove(&id).await?;
+            *current = None;
+        }
+        let id = scheduler
+            .add(Job::new_repeated_async(
+                Duration::from_secs(seconds),
+                Self::xiaohongshu_task(cx.clone()),
+            )?)
+            .await?;
+        *current = Some(id);
+        let next = scheduler
+            .next_tick_for_job(id)
+            .await?
+            .map(|v| v.timestamp())
+            .unwrap_or(0);
+        crate::xiaohongshu::runtime::NEXT_RUN.store(next, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
     /// 启动任务调度器
     async fn start(&self) -> Result<()> {
         self.sched.lock().await.start().await?;
@@ -168,6 +230,7 @@ impl DownloadTaskManager {
             status_rx,
             video_task_id,
             douyin_task_id: tokio::sync::Mutex::new(None),
+            xiaohongshu_task_id: tokio::sync::Mutex::new(None),
         });
         // 读取初始配置
         let mut rx = VersionedConfig::get().subscribe();
@@ -212,6 +275,9 @@ impl DownloadTaskManager {
         if let Err(error) = Self::schedule_douyin(&sched, cx.clone(), initial_config.douyin.interval).await {
             error!("[抖音] 调度初始化失败：{}", error);
         }
+        if let Err(error) = Self::schedule_xiaohongshu(&sched, cx.clone(), initial_config.xiaohongshu.interval).await {
+            error!("[小红书] 调度初始化失败：{}", error);
+        }
         // 发起一个一次性的任务，更新一下下次运行的时间
         if let Some(video_task_id) = video_task_id {
             sched
@@ -252,10 +318,19 @@ impl DownloadTaskManager {
                 error!("[抖音] 调度更新失败：{}", error);
                 douyin_interval = previous.douyin.interval;
             }
+            let mut xiaohongshu_interval = new_config.xiaohongshu.interval;
+            if previous.xiaohongshu.interval != new_config.xiaohongshu.interval
+                && let Err(error) =
+                    Self::schedule_xiaohongshu(&sched_clone, cx.clone(), new_config.xiaohongshu.interval).await
+            {
+                error!("[小红书] 调度更新失败：{}", error);
+                xiaohongshu_interval = previous.xiaohongshu.interval;
+            }
             let previous_bili_interval = previous.interval.clone();
             let bili_interval_changed = previous.interval != new_config.interval;
             previous = (*new_config).clone();
             previous.douyin.interval = douyin_interval;
+            previous.xiaohongshu.interval = xiaohongshu_interval;
             if !bili_interval_changed {
                 continue;
             }
@@ -481,6 +556,7 @@ mod tests {
             status_rx,
             video_task_id: tokio::sync::Mutex::new(None),
             douyin_task_id: tokio::sync::Mutex::new(None),
+            xiaohongshu_task_id: tokio::sync::Mutex::new(None),
         });
         let scheduler = Arc::new(tokio::sync::Mutex::new(JobScheduler::new().await.unwrap()));
         let initial = Arc::new(Config::default());
@@ -494,6 +570,7 @@ mod tests {
         let mut invalid = (*initial).clone();
         invalid.interval = Trigger::Cron("invalid cron".into());
         invalid.douyin.interval += 1;
+        invalid.xiaohongshu.interval += 1;
         tx.send(Arc::new(invalid)).unwrap();
         let first = tokio::time::timeout(Duration::from_secs(3), async {
             loop {
@@ -506,15 +583,36 @@ mod tests {
         .await
         .unwrap();
         assert!(scheduler.lock().await.next_tick_for_job(first).await.unwrap().is_some());
+        let first_xhs = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if let Some(id) = *cx.xiaohongshu_task_id.lock().await {
+                    break id;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            scheduler
+                .lock()
+                .await
+                .next_tick_for_job(first_xhs)
+                .await
+                .unwrap()
+                .is_some()
+        );
         assert!(!worker.is_finished());
         let mut valid = (*initial).clone();
         valid.interval = Trigger::Interval(1201);
         valid.douyin.interval += 2;
+        valid.xiaohongshu.interval += 2;
         tx.send(Arc::new(valid)).unwrap();
         tokio::time::timeout(Duration::from_secs(3), async {
             loop {
                 if cx.video_task_id.lock().await.is_some()
                     && cx.douyin_task_id.lock().await.is_some_and(|id| id != first)
+                    && cx.xiaohongshu_task_id.lock().await.is_some_and(|id| id != first_xhs)
                 {
                     break;
                 }

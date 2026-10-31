@@ -10,12 +10,16 @@
 	import DouyinAccount from '$lib/components/platforms/douyin/account.svelte';
 	import DouyinSources from '$lib/components/platforms/douyin/sources.svelte';
 	import DouyinTask from '$lib/components/platforms/douyin/task.svelte';
+	import XiaohongshuAccount from '$lib/components/platforms/xiaohongshu/account.svelte';
+	import XiaohongshuSources from '$lib/components/platforms/xiaohongshu/sources.svelte';
+	import XiaohongshuTask from '$lib/components/platforms/xiaohongshu/task.svelte';
 	import BilibiliSettings from '$lib/components/bilibili-settings.svelte';
 	import { platforms } from '$lib/stores/platforms';
 	import type { Platform } from '$lib/types';
 	const panels = {
 		bilibili: { account: BiliAccount, sources: BiliSources, sync: BiliTask },
-		douyin: { account: DouyinAccount, sources: DouyinSources, sync: DouyinTask }
+		douyin: { account: DouyinAccount, sources: DouyinSources, sync: DouyinTask },
+		xiaohongshu: { account: XiaohongshuAccount, sources: XiaohongshuSources, sync: XiaohongshuTask }
 	} satisfies Record<Platform, unknown>;
 
 	const steps = [

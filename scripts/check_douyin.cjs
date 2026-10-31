@@ -41,8 +41,12 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
     ];
     const videos = [
       { id: 1, platform: 'bilibili', platform_id: 'BVfixture', bvid: 'BVfixture', name: 'B站测试视频', upper_name: 'B站作者' },
-      { id: 2, platform: 'douyin', platform_id: '1234567890123456789', bvid: null, name: '抖音测试视频', upper_name: '抖音作者' }
-    ].map(video => ({ ...video, valid: true, should_download: true, download_state: 'succeeded', media_ready: true, source_url: video.platform === 'bilibili' ? 'https://www.bilibili.com/video/BVfixture/' : 'https://www.douyin.com/video/1234567890123456789', allowed_actions: video.platform === 'bilibili' ? ['status_edit','retry_failed','force_retry','clear_redownload'] : [], platform_details: video.platform === 'bilibili' ? {platform:'bilibili',download_status:[7,7,7,7,7]} : {platform:'douyin',failures:0} }));
+      { id: 2, platform: 'douyin', platform_id: '1234567890123456789', bvid: null, name: '抖音测试视频', upper_name: '抖音作者' },
+      { id: 3, platform: 'xiaohongshu', platform_id: 'xhs-fixture', bvid: null, name: '小红书测试视频', upper_name: '小红书作者' }
+    ].map(video => ({ ...video, valid: true, should_download: true, download_state: 'succeeded', media_ready: true, source_url: video.platform === 'bilibili' ? 'https://www.bilibili.com/video/BVfixture/' : video.platform === 'douyin' ? 'https://www.douyin.com/video/1234567890123456789' : 'https://www.xiaohongshu.com/explore/xhs-fixture', allowed_actions: video.platform === 'bilibili' ? ['status_edit','retry_failed','force_retry','clear_redownload'] : [], platform_details: video.platform === 'bilibili' ? {platform:'bilibili',download_status:[7,7,7,7,7]} : {platform:video.platform,failures:0} }));
+    const xhsStatus = {...structuredClone(status), window_size: 50, next_allowed_at: null};
+    const xhsSource = {name:'全部收藏',enabled:false,revision:1,baseline_done:false,baseline_at:null,last_scan:null,last_result:null,item_count:0,window_size:50};
+    let xhsGenerations=0,xhsCancels=0,xhsRuns=0;
     let refreshes = 0;
     let qrGenerations = 0;
     let qrPolls = 0;
@@ -67,7 +71,7 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
         assert.equal(request.headers()['x-csrf-token'], 'douyin-smoke-csrf');
         assert.equal(request.headers().origin, origin);
       }
-      if (url.pathname === '/api/platforms') return json([{ id: 'bilibili', name: 'B站', capabilities: ['status_edit','force_retry','clear_redownload','danmaku','subtitles','multipart','download_settings','qr_refresh'] }, { id: 'douyin', name: '抖音', capabilities: ['retry_failed'] }]);
+      if (url.pathname === '/api/platforms') return json([{ id: 'bilibili', name: 'B站', capabilities: ['status_edit','force_retry','clear_redownload','danmaku','subtitles','multipart','download_settings','qr_refresh'] }, { id: 'douyin', name: '抖音', capabilities: ['retry_failed'] }, { id: 'xiaohongshu', name: '小红书', capabilities: ['retry_failed'] }]);
       if (url.pathname === '/api/auth/session') return json({ setup_required: false, authenticated: true, username: 'smoke', csrf_token: 'douyin-smoke-csrf' });
       if (url.pathname === '/api/config') {
         if (request.method() === 'PUT') Object.assign(config, request.postDataJSON(), { version: config.version + 1 });
@@ -80,6 +84,25 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
         assert.equal(config.interval, 1200, 'Douyin interval must not alter Bili interval');
         config.version++;
         return json(status);
+      }
+      if (url.pathname === '/api/xiaohongshu/status') return json(xhsStatus);
+      if (url.pathname === '/api/video-sources/xiaohongshu') {
+        if (request.method()==='PUT') {xhsSource.enabled=request.postDataJSON().enabled;xhsSource.revision++;}
+        return json(xhsSource);
+      }
+      if (url.pathname === '/api/config/xiaohongshu') {xhsStatus.interval=request.postDataJSON().interval;return json(xhsStatus);}
+      if (url.pathname === '/api/task/xiaohongshu') {
+        xhsRuns++;xhsStatus.task.last_sync={started_at:'2026-10-30T12:00:00Z',finished_at:'2026-10-30T12:01:00Z',window_size:50,baseline:true,rebased:false,scanned:50,historical:35,existing:0,unsupported:15,inserted:0,downloaded:0,reused:0,recovered:0,failed:0,pending:0,error:null};
+        return json(true);
+      }
+      if (url.pathname === '/api/login/qrcode/generate' && url.searchParams.get('platform')==='xiaohongshu') {
+        assert.equal(url.searchParams.get('force_qr'),'true');xhsGenerations++;
+        return json({qrcode_key:'xhs-key',status:'pending',message:'正在准备新的官方二维码'});
+      }
+      if (url.pathname === '/api/login/qrcode/poll' && request.postDataJSON().platform==='xiaohongshu') {
+        const body=request.postDataJSON();assert.equal(body.qrcode_key,'xhs-key');
+        if (body.cancel) {xhsCancels++;return json({status:'cancelled'});}
+        return json({status:'pending',image:qrImage,message:'请用小红书手机应用扫码'});
       }
       if (url.pathname === '/api/login/qrcode/generate') {
         assert.equal(url.searchParams.get('platform'), 'douyin');
@@ -287,9 +310,42 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
     await page.reload();
     await expect(summary).toContainText('本轮没有新下载');
 
+    await page.goto(origin+'/platforms/xiaohongshu');
+    await expect(page.getByRole('heading',{name:'小红书',exact:true,level:1})).toBeVisible();
+    assert.equal(xhsGenerations,0,'Read-only platform load must not start QR login');
+    await page.getByRole('button',{name:'重新登录',exact:true}).click();
+    await expect(page.getByRole('img',{name:'登录二维码',exact:true})).toHaveAttribute('src',qrImage);
+    await page.keyboard.press('Escape');
+    await expect.poll(()=>xhsCancels).toBe(1);
+    await page.getByRole('tab',{name:'2. 收藏来源',exact:true}).click();
+    const xhsSources=page.getByRole('region',{name:'小红书收藏来源',exact:true});
+    await expect(xhsSources).toContainText('前 50 个不同条目');
+    await expect(xhsSources).toContainText('窗口外新增可能遗漏');
+    await page.getByRole('checkbox',{name:'自动保存新发现视频',exact:true}).click();
+    await expect(xhsSources).toContainText('已启用');
+    await page.getByRole('tab',{name:'3. 同步任务',exact:true}).click();
+    const beforeDy=status.interval, beforeBili=config.interval;
+    await page.getByLabel('小红书同步间隔（秒）').fill('3600');
+    await page.getByRole('button',{name:'保存同步间隔',exact:true}).click();
+    await expect.poll(()=>xhsStatus.interval).toBe(3600);
+    assert.equal(status.interval,beforeDy);assert.equal(config.interval,beforeBili);
+    await page.getByRole('button',{name:'同步并重试失败项',exact:true}).click();
+    await expect.poll(()=>xhsRuns).toBe(1);
+    const xhsTask=page.getByRole('region',{name:'小红书任务',exact:true});
+    await expect(xhsTask).toContainText('首次窗口已记录，本批不下载历史');
+    xhsStatus.task.last_sync.baseline=false;xhsStatus.task.last_sync.rebased=true;
+    await page.reload();await expect(xhsTask).toContainText('窗口断档，已重设起点，本批未下载');
+    await page.goto(origin+'/watch?platform=xiaohongshu');
+    await expect(page.locator('.watch-card')).toHaveCount(1);
+    await page.locator('.watch-card').click();
+    await expect(page.getByRole('link',{name:'在小红书打开',exact:true})).toHaveAttribute('href','https://www.xiaohongshu.com/explore/xhs-fixture');
+    await expect.poll(()=>page.locator('video').evaluate(v=>v.readyState)).toBeGreaterThanOrEqual(1);
+    await page.getByRole('link',{name:'管理此视频',exact:true}).click();
+    for (const name of ['重置','清空重置','编辑状态']) await expect(page.getByRole('button',{name,exact:true})).toHaveCount(0);
+
     await page.goto(origin + '/watch');
     const library = page.getByRole('region', { name: '已保存视频', exact: true });
-    await expect(library.locator('.watch-card')).toHaveCount(2);
+    await expect(library.locator('.watch-card')).toHaveCount(3);
     await page.getByLabel('平台', { exact: true }).selectOption('douyin');
     await expect(library.locator('.watch-card')).toHaveCount(1);
     await expect.poll(() => queries.at(-1).get('platform')).toBe('douyin');
@@ -304,11 +360,11 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
     await expect(page.getByText('抖音仅保存视频内容。', { exact: false })).toBeVisible();
     for (const width of [390, 350]) {
       await page.setViewportSize({ width, height: 844 });
-      for (const route of ['/settings', '/platforms/douyin', '/platforms/douyin?view=sources', '/platforms/douyin?view=sync', '/platforms/bilibili', '/platforms/bilibili?view=sources', '/platforms/bilibili?view=sync', '/platforms/bilibili?view=settings', '/', '/watch?platform=douyin', '/watch/2', '/video/2']) {
+      for (const route of ['/settings', '/platforms/xiaohongshu', '/platforms/xiaohongshu?view=sources', '/platforms/xiaohongshu?view=sync', '/watch?platform=xiaohongshu', '/watch/3', '/video/3', '/platforms/douyin', '/platforms/douyin?view=sources', '/platforms/douyin?view=sync', '/platforms/bilibili', '/platforms/bilibili?view=sources', '/platforms/bilibili?view=sync', '/platforms/bilibili?view=settings', '/', '/watch?platform=douyin', '/watch/2', '/video/2']) {
         await page.goto(origin + route);
         if (route.startsWith('/platforms/')) {
-          await expect(page.getByRole('heading', { name: route.includes('douyin') ? '抖音' : 'B站', exact: true, level: 1 })).toBeVisible();
-          if (route.includes('view=sources')) await expect(page.getByText(route.includes('douyin') ? '抖音精选' : '暂无收藏夹', { exact: true })).toBeVisible();
+          await expect(page.getByRole('heading', { name: route.includes('douyin') ? '抖音' : route.includes('xiaohongshu') ? '小红书' : 'B站', exact: true, level: 1 })).toBeVisible();
+          if (route.includes('view=sources')) await expect(page.getByText(route.includes('douyin') ? '抖音精选' : route.includes('xiaohongshu') ? '全部收藏' : '暂无收藏夹', { exact: true })).toBeVisible();
           if (route.includes('view=sync')) await expect(page.getByRole('region', { name: '同步计划', exact: true })).toContainText('同步间隔');
         }
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), { message: `Horizontal overflow at ${route}, width ${width}` }).toBe(true);
@@ -323,6 +379,6 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
     await expect(page.getByRole('alert')).toContainText('不支持此平台');
     assert.equal(qrGenerations, generationsBeforeUnknown);
     assert.deepEqual(errors, []);
-    console.log('PASS: Platform navigation/deep links/back/reload, Bili isolation/settings/task, general settings, Douyin QR pending image/reuse/error, distinct operation stages, absent/partial/zero summaries, interval isolation, folder selection/baseline/manual refresh, pause/resume, platform filters, actual source links, local playback and mobile layout.');
+    console.log('PASS: Three-platform navigation, Xiaohongshu QR cancellation/window/source/baseline/rebase/config/media, platform navigation/deep links/back/reload, Bili isolation/settings/task, general settings, Douyin QR pending image/reuse/error, distinct operation stages, absent/partial/zero summaries, interval isolation, folder selection/baseline/manual refresh, pause/resume, platform filters, actual source links, local playback and mobile layout.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

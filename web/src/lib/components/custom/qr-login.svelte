@@ -50,6 +50,8 @@
 	let pollInFlight = false;
 	let generation = 0;
 	let pendingMessage = '';
+	let destroyed = false;
+	let loginCompleted = false;
 
 	async function displayQrcode(data: { image?: string; url?: string }, request: number) {
 		if (!data.image && !data.url) return;
@@ -88,8 +90,12 @@
 		pendingMessage = '';
 
 		try {
-			const response = await api.generateQrcode(platform, platform === 'douyin');
-			if (request !== generation) return;
+			const response = await api.generateQrcode(platform, platform !== 'bilibili');
+			if (request !== generation) {
+				if (destroyed && platform === 'xiaohongshu')
+					void api.cancelQrcode(response.data.qrcode_key, platform).catch(() => {});
+				return;
+			}
 			qrcodeKey = response.data.qrcode_key;
 			pendingMessage = response.data.message || '';
 			countdown = QR_EXPIRE_TIME;
@@ -129,6 +135,7 @@
 			if (!isPolling || request !== generation) return;
 
 			if (pollResult.status === 'success') {
+				loginCompleted = true;
 				stopPolling();
 				stopCountdown();
 				onSuccess();
@@ -210,6 +217,9 @@
 	}
 
 	onDestroy(() => {
+		destroyed = true;
+		if (platform === 'xiaohongshu' && qrcodeKey && !loginCompleted)
+			void api.cancelQrcode(qrcodeKey, platform).catch(() => {});
 		generation++;
 		stopPolling();
 		stopCountdown();

@@ -37,7 +37,9 @@ async fn database_connection(database_url: &str) -> Result<DatabaseConnection> {
 async fn migrate_database(database_url: &str) -> Result<()> {
     // 注意此处使用内部构造的 DatabaseConnection，而不是通过 database_connection() 获取
     // 这是因为使用多个连接的 Connection 会导致奇怪的迁移顺序问题，而使用默认的连接选项不会
-    let connection = Database::connect(database_url).await?;
+    let mut options = ConnectOptions::new(database_url);
+    options.max_connections(1).min_connections(1);
+    let connection = Database::connect(options).await?;
     // 避免 https://github.com/amtoaer/bili-sync/issues/571 问题，迁移前根据 migration 确认当前版本
     // 如果用户从 2.6.0 以下版本直接升级，migration 不满足需求，直接报错而不执行迁移
     if connection

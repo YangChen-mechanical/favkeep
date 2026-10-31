@@ -20,6 +20,7 @@ mod m20261023_000001_add_app_auth;
 mod m20261026_000001_add_douyin;
 
 mod m20261027_000001_platform_media;
+mod m20261030_000001_add_xiaohongshu;
 
 pub struct Migrator;
 
@@ -45,6 +46,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261023_000001_add_app_auth::Migration),
             Box::new(m20261026_000001_add_douyin::Migration),
             Box::new(m20261027_000001_platform_media::Migration),
+            Box::new(m20261030_000001_add_xiaohongshu::Migration),
         ]
     }
 }
