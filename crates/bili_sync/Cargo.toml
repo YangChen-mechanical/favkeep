@@ -83,3 +83,6 @@ release = true
 [[bin]]
 name = "bili-sync-rs"
 path = "src/main.rs"
+
+[dev-dependencies]
+ring = "=0.17.14"

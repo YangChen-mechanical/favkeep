@@ -1,6 +1,12 @@
-//! Browser-free protocol gate. Only requests a fresh QR; never opens an application database or imports a session.
+//! Isolated browser-free login/restore protocol gate; never opens an application database or imports browser sessions.
+#[path = "browserless/codec.rs"]
+mod codec;
+#[path = "browserless/douyin_passport.rs"]
+mod douyin_passport;
 #[path = "../src/douyin/sign.rs"]
 mod douyin_sign;
+#[path = "browserless/passport_sign.rs"]
+mod passport_sign;
 #[path = "browserless/xhs.rs"]
 mod xhs;
 #[path = "browserless/xhs_media.rs"]
@@ -38,7 +44,14 @@ impl Platform {
     }
     fn allows(self, host: &str) -> bool {
         match self {
-            Self::Douyin => ["www.douyin.com", "login.douyin.com", "sso.douyin.com"].contains(&host),
+            Self::Douyin => [
+                "www.douyin.com",
+                "login.douyin.com",
+                "sso.douyin.com",
+                "ttwid.bytedance.com",
+                "mssdk.bytedance.com",
+            ]
+            .contains(&host),
             Self::Xiaohongshu => [
                 "www.rednote.com",
                 "webapi.rednote.com",
@@ -60,7 +73,7 @@ struct Args {
     /// Explicitly allow one official bootstrap followed by one QR request; no automatic retries.
     #[arg(long)]
     live: bool,
-    /// Wait for phone confirmation and verify official self identity (Xiaohongshu only).
+    /// Wait for phone confirmation and verify official self identity (Xiaohongshu or Douyin Passport).
     #[arg(long)]
     login: bool,
     /// Restore only a verified credential file produced by this browserless probe.
@@ -74,11 +87,17 @@ struct Args {
     download_three: bool,
     #[arg(long, requires = "download_three")]
     sample_ids_file: Option<PathBuf>,
+    /// Private JSON list of the already selected Douyin folder IDs; required for its scan.
+    #[arg(long, requires = "scan")]
+    folder_ids_file: Option<PathBuf>,
     #[arg(long, default_value = "ffprobe")]
     ffprobe: PathBuf,
     /// Explicit experiment with the official SSO QR protocol used by Rust SDKs; never an automatic fallback.
     #[arg(long)]
     douyin_sso: bool,
+    /// Current Passport SDK fields and freshly minted visitor tokens; no automatic fallback.
+    #[arg(long, conflicts_with = "douyin_sso")]
+    douyin_passport: bool,
 }
 
 fn trusted(platform: Platform, url: &Url) -> bool {
@@ -181,7 +200,7 @@ fn classification(status: u16, body: &[u8], json: Option<&Value>) -> &'static st
             let clean = scripts.replace_all(&raw, " ");
             let tags = regex::Regex::new(r"(?s)<[^>]*>").unwrap();
             let visible = tags.replace_all(&clean, " ").to_ascii_lowercase();
-            if ["ip at risk", "请完成安全验证", "安全限制"]
+            if ["ip at risk", "请完成安全验证", "安全限制", "验证码中间页"]
                 .iter()
                 .any(|s| visible.contains(s))
             {
@@ -212,6 +231,35 @@ async fn request(
     stage: &str,
     root: &Path,
 ) -> Result<Value> {
+    let response = capture(client, platform, request, stage, root).await?;
+    if (stage == "bootstrap" || stage.starts_with("document-"))
+        && response.status == 200
+        && ["unexpected_non_json", "json_received"].contains(&response.classification)
+    {
+        return Ok(response.value.unwrap_or(Value::Null));
+    }
+    ensure!(
+        response.classification == "json_received",
+        "{}",
+        response.classification
+    );
+    response.value.context("missing JSON response")
+}
+
+struct Captured {
+    status: u16,
+    headers: header::HeaderMap,
+    value: Option<Value>,
+    classification: &'static str,
+}
+
+async fn capture(
+    client: &Client,
+    platform: Platform,
+    request: reqwest::RequestBuilder,
+    stage: &str,
+    root: &Path,
+) -> Result<Captured> {
     let request = request.build()?;
     ensure!(trusted(platform, request.url()), "untrusted request target");
     let mut response = client
@@ -219,6 +267,7 @@ async fn request(
         .await
         .map_err(|_| anyhow::anyhow!("transport_failed"))?;
     let status = response.status().as_u16();
+    let headers = response.headers().clone();
     let content_type = response
         .headers()
         .get(header::CONTENT_TYPE)
@@ -247,14 +296,12 @@ async fn request(
         &serde_json::to_vec_pretty(&report)?,
     )?;
     println!("{}", serde_json::to_string(&report)?);
-    if (stage == "bootstrap" || stage.starts_with("document-"))
-        && status == 200
-        && ["unexpected_non_json", "json_received"].contains(&result)
-    {
-        return Ok(value.unwrap_or(Value::Null));
-    }
-    ensure!(result == "json_received", "{result}");
-    value.context("missing JSON response")
+    Ok(Captured {
+        status,
+        headers,
+        value,
+        classification: result,
+    })
 }
 
 async fn run(args: &Args) -> Result<()> {
@@ -279,6 +326,12 @@ async fn run(args: &Args) -> Result<()> {
             .build()?;
     match platform {
         Platform::Douyin => {
+            if let Some(source) = &args.restore_auth {
+                return douyin_passport::restore(&client, &jar, args, source).await;
+            }
+            if args.douyin_passport {
+                return douyin_passport::qrcode(&client, &jar, args).await;
+            }
             if args.douyin_sso {
                 let fp = verify_fp();
                 jar.add_cookie_str(
@@ -427,24 +480,32 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     ensure!(args.live, "explicit --live is required; no request sent");
     ensure!(
-        !args.douyin_sso || matches!(args.platform, Platform::Douyin),
-        "SSO experiment is Douyin-only"
+        !(matches!(args.platform, Platform::Douyin) && args.download_three),
+        "Douyin media gate is not implemented yet; no request sent"
     );
     ensure!(
-        !args.login || matches!(args.platform, Platform::Xiaohongshu),
-        "login currently only supported in the Xiaohongshu probe"
+        !(args.douyin_sso || args.douyin_passport) || matches!(args.platform, Platform::Douyin),
+        "Passport and SSO experiments are Douyin-only"
+    );
+    ensure!(
+        !args.login || matches!(args.platform, Platform::Xiaohongshu) || args.douyin_passport,
+        "Douyin login requires --douyin-passport"
     );
     ensure!(
         !args.scan || args.login || args.restore_auth.is_some(),
         "scan requires login or verified probe restoration"
     );
     ensure!(
-        args.restore_auth.is_none() || matches!(args.platform, Platform::Xiaohongshu),
-        "restoration currently only supported in the Xiaohongshu probe"
+        args.restore_auth.is_none() || matches!(args.platform, Platform::Xiaohongshu) || args.douyin_passport,
+        "Douyin restoration requires --douyin-passport"
+    );
+    ensure!(
+        !matches!(args.platform, Platform::Douyin) || !args.scan || args.folder_ids_file.is_some(),
+        "Douyin scan requires --folder-ids-file"
     );
     private_dir(&args.output_dir)?;
     let result = run(&args).await;
-    let summary = json!({"platform":args.platform.name(),"arch":std::env::consts::ARCH,"os":std::env::consts::OS,"browser_used":false,"application_database_opened":false,"qr_obtained":args.output_dir.join("qr-private.json").is_file(),"identity_verified":args.output_dir.join("auth.json").is_file(),"window_complete":args.output_dir.join("window-private.json").is_file(),"gate_passed":false,"scope":if args.scan{"authenticated_window_probe"}else if args.restore_auth.is_some(){"restore_probe"}else if args.login{"fresh_qr_login_probe"}else{"fresh_qr_preflight_only"},"failure":result.as_ref().err().map(|e|e.to_string()),"timestamp":chrono::Utc::now().to_rfc3339()});
+    let summary = json!({"platform":args.platform.name(),"arch":std::env::consts::ARCH,"os":std::env::consts::OS,"browser_used":false,"application_database_opened":false,"qr_obtained":args.output_dir.join("qr-private.json").is_file(),"identity_verified":args.output_dir.join("auth.json").is_file(),"window_complete":args.output_dir.join("window-private.json").is_file(),"collection_complete":args.output_dir.join("collections-private.json").is_file(),"downloads_validated":args.output_dir.join("downloads.json").is_file(),"gate_passed":false,"scope":if args.scan{if matches!(args.platform,Platform::Douyin){"authenticated_collection_probe"}else{"authenticated_window_probe"}}else if args.restore_auth.is_some(){"restore_probe"}else if args.login{"fresh_qr_login_probe"}else{"fresh_qr_preflight_only"},"failure":result.as_ref().err().map(|e|e.to_string()),"timestamp":chrono::Utc::now().to_rfc3339()});
     write(
         &args.output_dir.join("result.json"),
         &serde_json::to_vec_pretty(&summary)?,
@@ -491,6 +552,14 @@ mod tests {
         assert!(!bootstrap_redirect(Platform::Douyin, &initial, &target, 1));
         assert_eq!(
             classification(200, b"<html>IP at risk</html>", None),
+            "verification_required"
+        );
+        assert_eq!(
+            classification(
+                200,
+                "<title>验证码中间页</title><script src='captcha/index.js'></script>".as_bytes(),
+                None
+            ),
             "verification_required"
         );
         assert_eq!(

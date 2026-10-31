@@ -1,0 +1,151 @@
+[
+  {
+    "query": [
+      [
+        "aid",
+        "6383"
+      ],
+      [
+        "language",
+        "zh"
+      ],
+      [
+        "ts",
+        "fixture"
+      ]
+    ],
+    "body": [],
+    "now_ms": 1761900000123,
+    "path": "/passport/web/get_qrcode/",
+    "plaintext": "fixture",
+    "ts": "1761912000",
+    "encrypted": "636c7d71707760",
+    "aid_sign": "0a9a7f8a681cef39f3ebd24f3fa4bb5c5b8abfe82615c782f975ef1a91883889",
+    "sign": "997b0e9be1134f06e0b7d87130ff8e3de2096a60731148bf02e2b74a74d1492c",
+    "qs": "646c612969646b6270646260297176"
+  },
+  {
+    "query": [
+      [
+        "z",
+        "last"
+      ],
+      [
+        "aid",
+        "6383"
+      ],
+      [
+        "sign",
+        "ignored"
+      ],
+      [
+        "qs",
+        "ignored"
+      ],
+      [
+        "msToken",
+        "ignored"
+      ],
+      [
+        "a_bogus",
+        "ignored"
+      ],
+      [
+        "aid",
+        "replaced"
+      ]
+    ],
+    "body": [
+      [
+        "token",
+        "fixture"
+      ],
+      [
+        "need_logo",
+        "false"
+      ]
+    ],
+    "now_ms": 1761986400123,
+    "path": "/passport/web/get_qrcode/",
+    "plaintext": "fixture",
+    "ts": "1761998400",
+    "encrypted": "636c7d71707760",
+    "aid_sign": "7a1c6c396caa99a792cfc650e23238ae60a7e0c4db0478ca1f2df587b4db327f",
+    "sign": "8c0d370c2b7be23e7038c697a81131f668084a3e740dcc474244fc20c0ef45af",
+    "qs": "646c61297f"
+  },
+  {
+    "query": [
+      [
+        "key0",
+        "0"
+      ],
+      [
+        "key1",
+        "1"
+      ],
+      [
+        "key2",
+        "2"
+      ],
+      [
+        "key3",
+        "3"
+      ],
+      [
+        "key4",
+        "4"
+      ],
+      [
+        "key5",
+        "5"
+      ],
+      [
+        "key6",
+        "6"
+      ],
+      [
+        "key7",
+        "7"
+      ],
+      [
+        "key8",
+        "8"
+      ],
+      [
+        "key9",
+        "9"
+      ],
+      [
+        "key10",
+        "10"
+      ],
+      [
+        "key11",
+        "11"
+      ]
+    ],
+    "body": [
+      [
+        "title",
+        "中文 + / 测试"
+      ],
+      [
+        "token",
+        "first"
+      ],
+      [
+        "token",
+        "last"
+      ]
+    ],
+    "now_ms": 1762072800123,
+    "path": "/passport/web/get_qrcode/",
+    "plaintext": "中文\n + /",
+    "ts": "1762084800",
+    "encrypted": "e1bda8e39382f252e252a",
+    "aid_sign": "02436ddf337763176fb1d245ae9b0d8b224083816b281ebd9798cc84a3e4e261",
+    "sign": "77a02fb5c931d35d1625249848145e3109ca9d1df4948e109fa8e48cbe38f7e9",
+    "qs": "6e607c35296e607c34296e607c3435296e607c3434296e607c37296e607c36296e607c31296e607c30296e607c33296e607c32"
+  }
+]

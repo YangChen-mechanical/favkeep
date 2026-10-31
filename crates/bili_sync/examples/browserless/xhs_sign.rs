@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Port of Cloxl/xhshow b242a84f9c5a6a971bc4c90c63ad43345a4bf8a1; see xhshow-LICENSE.
+use super::codec::rc4;
 use anyhow::{Result, ensure};
 use base64::{
     Engine,
@@ -104,25 +105,6 @@ pub fn sign(path: &str, body: Option<&str>, a1: &str, inputs: &Inputs) -> Result
         "XYS_{}",
         encode(serde_json::to_string(&data)?.as_bytes(), ALPHABET)
     ))
-}
-
-fn rc4(bytes: &[u8], key: &[u8]) -> Vec<u8> {
-    let mut state = std::array::from_fn::<_, 256, _>(|i| i as u8);
-    let mut j = 0usize;
-    for i in 0..256 {
-        j = (j + usize::from(state[i]) + usize::from(key[i % key.len()])) % 256;
-        state.swap(i, j);
-    }
-    let (mut i, mut j) = (0, 0);
-    bytes
-        .iter()
-        .map(|byte| {
-            i = (i + 1) % 256;
-            j = (j + usize::from(state[i])) % 256;
-            state.swap(i, j);
-            byte ^ state[(usize::from(state[i]) + usize::from(state[j])) % 256]
-        })
-        .collect()
 }
 
 pub fn common(a1: &str, timestamp: u64, activity: u8) -> Result<String> {

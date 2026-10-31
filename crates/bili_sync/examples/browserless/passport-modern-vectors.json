@@ -1,0 +1,78 @@
+[
+  {
+    "pairs": [
+      [
+        "aid",
+        "6383"
+      ],
+      [
+        "next",
+        "https://www.douyin.com"
+      ],
+      [
+        "note",
+        "space + ~ ! 中文"
+      ]
+    ],
+    "body": "",
+    "now": 1793448101123,
+    "counter": 3,
+    "plaintext": "",
+    "nonce": 0,
+    "query": "aid=6383&next=https%3A%2F%2Fwww.douyin.com&note=space%20%2B%20~%20%21%20%E4%B8%AD%E6%96%87",
+    "abogus": "Q7sfhqyEm2ARCd/bmOjCtGlUaZnArBSyCBiKbiHPHxz1L1tGYbNrzneHrxFes0uGAbphko37xE0MbDVcp0UwponpumpvuZkjWGAcnUXo21wXYzkQDNRZCzsoHJtT8YJE85ofJAWlUtmOIEA4DprwUp597Apj4Qkp/raRdrRai9efgMs9FqFQuOGDxwtq8E==",
+    "str_data": "ffD=",
+    "web_signed": "aid=6383&next=https%3A%2F%2Fwww.douyin.com&note=space%20%2B%20~%20!%20%E4%B8%AD%E6%96%87&uifid=synthetic-uifid&timestamp=1793448101&x-secsdk-web-signature=c6080cd9eb851f18a3a64f94e5f043e4"
+  },
+  {
+    "pairs": [
+      [
+        "passport_jssdk_version",
+        "3.4.9"
+      ],
+      [
+        "aid",
+        "6383"
+      ],
+      [
+        "request_host",
+        "https%3A%2F%2Fwww.douyin.com"
+      ]
+    ],
+    "body": "token=synthetic%20token&is_frontier=false",
+    "now": 1793448101249,
+    "counter": 140,
+    "plaintext": "{\"nWID\":{\"fixture\":\"中文\"},\"wID\":{\"msgType\":3}}",
+    "nonce": 255,
+    "query": "passport_jssdk_version=3.4.9&aid=6383&request_host=https%253A%252F%252Fwww.douyin.com",
+    "abogus": "Q7sfhqyEm2ARCd/bmOjCtGlU-qnArBSyuPiKWNHPHPzaL1tbYbNrzyFHrPFes0uGAbZhk237xE8hbDfcp0ULmonpumpvuMsjWGAcnU0o21wXYzkQDNRZCzsoHJtT8YJE85ofJAWlUtmOIEA4DprwUp597Apj4Qkp/raRdrRai9efgMs9FqFQuOGDxXFY5R9-Wj==",
+    "str_data": "flSIkyhr/vWG7LsTtU9S4cNmN2aQyVTNhNXajb4vl+PMPC54lYvVSQH+atU6wxEO60Ep",
+    "web_signed": "passport_jssdk_version=3.4.9&aid=6383&request_host=https%253A%252F%252Fwww.douyin.com&uifid=synthetic-uifid&timestamp=1793448101&x-secsdk-web-signature=df4c08d458e7a26c517f05e211fa2466"
+  },
+  {
+    "host": "www.douyin.com",
+    "pairs": [
+      [
+        "x",
+        "one"
+      ],
+      [
+        "x",
+        "two"
+      ],
+      [
+        "escaped",
+        "\n\u0000&="
+      ]
+    ],
+    "body": "",
+    "now": 1793448101377,
+    "counter": 10746,
+    "plaintext": "line\n\u0000emoji🙂",
+    "nonce": 91,
+    "query": "x=one&x=two&escaped=%0A%00%26%3D",
+    "abogus": "Q7sfhqyEm2ARCd/bmOxeC41Uaq9ArBSy9BiKSwZlHOLaL1eTYRNrzxeHrxF7Y0uGAb1hko37onsMbfVcp0twponpumpvuZsjWGAcnUXo21wXYzkQDNRZCzsoHJtT8YJE85ofJAWlUtmOIEA4DprwUp597Apj4Qkp/raRdrRai9efgMs9FqFQuOGDxhtqMf==",
+    "str_data": "fXuw9xLQ1NE82/PAOv6xAvK=",
+    "web_signed": "x=one&x=two&escaped=%0A%00%26%3D&uifid=synthetic-uifid&timestamp=1793448101&x-secsdk-web-signature=84fa14e3142462e3ee9ac601de15d73c"
+  }
+]
