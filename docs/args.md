@@ -16,7 +16,15 @@ Options:
   -V, --version                Print version
 ```
 
-可以看到除版本和帮助信息外，程序仅支持两个参数，参数除可以通过命令行设置外，还可通过环境变量设置。
+上面是早期版本的帮助示例，完整参数以当前程序的 `--help` 输出为准。参数除可以通过命令行设置外，还可通过环境变量设置。
+
+## `--media-root`
+
+可选参数，对应环境变量 `BILI_SYNC_MEDIA_ROOT`，指定抖音与小红书新配置的默认媒体父目录，须使用绝对路径。例如 `--media-root /media` 分别生成 `douyin.path=/media/douyin` 与 `xiaohongshu.path=/media/xiaohongshu`。
+
+只在对应平台的配置或 `path` 字段缺省时生效；已有配置路径优先，不移动文件、不修改数据库中已有媒体路径，也不影响 B 站来源路径、命名模板或 `/downloads` 挂载。未设置时沿用原默认值：配置目录下的 `douyin-media` 与 `xiaohongshu-media`。
+
+宿主机目录与 Docker 挂载示例见 [三平台媒体目录](favkeep/media-paths.md)。
 
 ## `--scan-only`
 

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
 use anyhow::{Result, bail};
@@ -24,6 +24,14 @@ pub static CONFIG_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
         .or_else(|| dirs::config_dir().map(|dir| dir.join("bili-sync")))
         .expect("No config path found")
 });
+
+fn default_media_path(platform: &str, media_root: Option<&Path>) -> String {
+    media_root
+        .map(|root| root.join(platform))
+        .unwrap_or_else(|| CONFIG_DIR.join(format!("{platform}-media")))
+        .to_string_lossy()
+        .into_owned()
+}
 
 #[derive(Serialize, Deserialize, Validate, Clone)]
 pub struct Config {
@@ -80,7 +88,7 @@ impl Default for DouyinConfig {
             } else {
                 "/usr/bin/chromium".into()
             },
-            path: CONFIG_DIR.join("douyin-media").to_string_lossy().into_owned(),
+            path: default_media_path("douyin", ARGS.media_root.as_deref()),
         }
     }
 }
@@ -98,7 +106,7 @@ impl Default for XiaohongshuConfig {
         Self {
             interval: 1800,
             browser: DouyinConfig::default().browser,
-            path: CONFIG_DIR.join("xiaohongshu-media").to_string_lossy().into_owned(),
+            path: default_media_path("xiaohongshu", ARGS.media_root.as_deref()),
         }
     }
 }
@@ -203,6 +211,42 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_root_defaults_use_separate_platform_directories() {
+        use clap::Parser;
+
+        let root = CONFIG_DIR.join("test-downloads");
+        let args = crate::config::args::Args::try_parse_from([
+            std::ffi::OsStr::new("bili-sync-rs"),
+            std::ffi::OsStr::new("--media-root"),
+            root.as_os_str(),
+        ])
+        .unwrap();
+        assert!(crate::config::args::Args::try_parse_from(["bili-sync-rs", "--media-root", "relative"]).is_err());
+        for platform in ["douyin", "xiaohongshu"] {
+            assert_eq!(
+                PathBuf::from(default_media_path(platform, args.media_root.as_deref())),
+                root.join(platform)
+            );
+            assert_eq!(
+                PathBuf::from(default_media_path(platform, None)),
+                CONFIG_DIR.join(format!("{platform}-media"))
+            );
+        }
+    }
+
+    #[test]
+    fn saved_media_and_bilibili_paths_are_preserved() {
+        let mut config = Config::default();
+        config.douyin.path = CONFIG_DIR.join("existing-douyin").to_string_lossy().into_owned();
+        config.xiaohongshu.path = CONFIG_DIR.join("existing-xhs").to_string_lossy().into_owned();
+        config.favorite_default_path = "/downloads/下载/{{name}}".into();
+        config.submission_default_path = "/downloads/投稿/{{name}}".into();
+        let saved = serde_json::to_value(&config).unwrap();
+        let restored: Config = serde_json::from_value(saved.clone()).unwrap();
+        assert_eq!(serde_json::to_value(restored).unwrap(), saved);
+    }
 
     #[test]
     fn legacy_config_defaults_douyin_and_invalid_paths_or_interval_fail_validation() {

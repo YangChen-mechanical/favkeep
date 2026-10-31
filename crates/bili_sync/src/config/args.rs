@@ -21,6 +21,10 @@ pub struct Args {
     #[arg(short, long, env = "BILI_SYNC_CONFIG_DIR")]
     pub config_dir: Option<PathBuf>,
 
+    /// Default parent directory for new Douyin and Xiaohongshu media paths; saved paths take precedence.
+    #[arg(long, env = "BILI_SYNC_MEDIA_ROOT", value_parser = parse_media_root)]
+    pub media_root: Option<PathBuf>,
+
     #[arg(short, long, env = "BILI_SYNC_FFMPEG_PATH")]
     pub ffmpeg_path: Option<String>,
 
@@ -39,6 +43,14 @@ pub struct Args {
     /// Stop the server before importing a dedicated same-account private session export.
     #[arg(long, value_name = "PRIVATE_AUTH_JSON", conflicts_with = "reset_password")]
     pub douyin_import_session: Option<PathBuf>,
+}
+
+fn parse_media_root(value: &str) -> Result<PathBuf, &'static str> {
+    let path = PathBuf::from(value);
+    if !path.is_absolute() {
+        return Err("media root must be an absolute path");
+    }
+    Ok(path)
 }
 
 mod built_info {
