@@ -39,7 +39,7 @@ fn sample_urls(id: &str, payload: &Value) -> Result<Vec<String>> {
 fn media_url(raw: &str) -> Result<Url> {
     let url = douyin_media::media_url(raw).context("untrusted_media_url")?;
     ensure!(
-        url.host_str() == Some("v26-web.douyinvod.com"),
+        matches!(url.host_str(), Some("v26-web.douyinvod.com" | "v11-weba.douyinvod.com")),
         "unconfirmed_media_host"
     );
     Ok(url)
@@ -147,6 +147,7 @@ mod tests {
     #[test]
     fn media_hosts_are_confirmed_https_targets_without_credentials() {
         assert!(media_url("https://v26-web.douyinvod.com/video").is_ok());
+        assert!(media_url("https://v11-weba.douyinvod.com/video").is_ok());
         for url in [
             "http://v26-web.douyinvod.com/video",
             "https://v26-web.douyinvod.com.evil.test/video",
@@ -154,6 +155,7 @@ mod tests {
             "https://user@v26-web.douyinvod.com/video",
             "https://v26-web.douyinvod.com:444/video",
             "https://unconfirmed.douyinvod.com/video",
+            "https://v11-weba.douyinvod.com.evil.test/video",
         ] {
             assert!(media_url(url).is_err());
         }
