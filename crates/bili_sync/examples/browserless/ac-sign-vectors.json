@@ -1,0 +1,118 @@
+{
+  "official_sdk_sha256": "76bee010ec645500ff8012396694a708c5b38e812d8822544e312485e0002a5b",
+  "comparison_runtime": "cv-cat/catbus bcc72f81549b94090b340fb87f29927529056e49, MIT; offline synthetic inputs only",
+  "vectors": [
+    {
+      "nonce": "0123456789abcdef0123",
+      "seconds": 1793501400,
+      "href": "https://www.douyin.com/jingxuan",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+      "signature": "_02B4Z6wo00f01ZaiyhwAAIDAG-KzjAl7BYmWgs6AAA9P46",
+      "profile": {
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+        "href": "https://www.douyin.com/jingxuan",
+        "domInvalid": false,
+        "feVersion": 2,
+        "canvasHash": 1666195044,
+        "anomalyBits": 2049,
+        "flags": {
+          "directSign": true,
+          "consistent": false,
+          "location": false,
+          "switch": false,
+          "dom": false,
+          "debugger": false,
+          "node": false,
+          "phantom": false,
+          "webdriver": false,
+          "incognito": false,
+          "hook": false
+        }
+      }
+    },
+    {
+      "nonce": "00000000000000000000",
+      "seconds": 1700000000,
+      "href": "https://www.douyin.com/jingxuan",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+      "signature": "_02B4Z6wo00f01djMsQgAAIDAVYzImzgoFhXY7LWAABNie9",
+      "profile": {
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+        "href": "https://www.douyin.com/jingxuan",
+        "domInvalid": false,
+        "feVersion": 2,
+        "canvasHash": 1666195044,
+        "anomalyBits": 2049,
+        "flags": {
+          "directSign": true,
+          "consistent": false,
+          "location": false,
+          "switch": false,
+          "dom": false,
+          "debugger": false,
+          "node": false,
+          "phantom": false,
+          "webdriver": false,
+          "incognito": false,
+          "hook": false
+        }
+      }
+    },
+    {
+      "nonce": "abcdef0123456789abcd",
+      "seconds": 4294967295,
+      "href": "https://www.douyin.com/jingxuan?query=%E6%B5%8B%E8%AF%95",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+      "signature": "_02B4Z6wo00f01NYrdjgAAIDBW2sPqHYXukTWC3KAAMqBd7",
+      "profile": {
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+        "href": "https://www.douyin.com/jingxuan?query=%E6%B5%8B%E8%AF%95",
+        "domInvalid": false,
+        "feVersion": 2,
+        "canvasHash": 1666195044,
+        "anomalyBits": 2049,
+        "flags": {
+          "directSign": true,
+          "consistent": false,
+          "location": false,
+          "switch": false,
+          "dom": false,
+          "debugger": false,
+          "node": false,
+          "phantom": false,
+          "webdriver": false,
+          "incognito": false,
+          "hook": false
+        }
+      }
+    },
+    {
+      "nonce": "fedcba9876543210fedc",
+      "seconds": 4294967396,
+      "href": "https://www.douyin.com/jingxuan",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+      "signature": "_02B4Z6wo00f01oTaNJAAAIDDCZpNAodG2FaE-jAAAKFA00",
+      "profile": {
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        "href": "https://www.douyin.com/jingxuan",
+        "domInvalid": false,
+        "feVersion": 2,
+        "canvasHash": 1666195044,
+        "anomalyBits": 2049,
+        "flags": {
+          "directSign": true,
+          "consistent": false,
+          "location": false,
+          "switch": false,
+          "dom": false,
+          "debugger": false,
+          "node": false,
+          "phantom": false,
+          "webdriver": false,
+          "incognito": false,
+          "hook": false
+        }
+      }
+    }
+  ]
+}

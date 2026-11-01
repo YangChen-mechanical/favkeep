@@ -1,4 +1,6 @@
 //! Isolated browser-free login/restore protocol gate; never opens an application database or imports browser sessions.
+#[path = "browserless/ac_sign.rs"]
+mod ac_sign;
 #[path = "../src/utils/rc4.rs"]
 mod codec;
 #[path = "browserless/douyin_passport.rs"]

@@ -114,6 +114,20 @@ fn cookie(jar: &Jar, name: &str) -> Option<String> {
         })
 }
 
+fn site_cookie(jar: &Jar, name: &str) -> Option<String> {
+    let header = jar.cookies(&Url::parse(WWW).ok()?)?;
+    let mut values = header.to_str().ok()?.split("; ").filter_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        (key == name).then_some(value)
+    });
+    let value = values.next()?;
+    values.all(|other| other == value).then(|| value.to_owned())
+}
+
+fn valid_ac_nonce(value: &str) -> bool {
+    (20..=64).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 fn private_headers(root: &Path, stage: &str, headers: &header::HeaderMap) -> Result<()> {
     let selected: Vec<_> = headers
         .iter()
@@ -289,7 +303,7 @@ pub async fn qrcode(client: &Client, jar: &Jar, args: &super::Args) -> Result<()
         counter: 2,
     };
     if args.douyin_guest_bootstrap {
-        passport.prepare_visitor().await?;
+        passport.prepare_visitor(true).await?;
         println!(
             "{}",
             json!({"stage":"guest_visitor_initialized","official_cookie_received":true})
@@ -379,7 +393,7 @@ impl Passport<'_> {
     }
 
     async fn scan(&mut self, args: &super::Args) -> Result<()> {
-        self.prepare_visitor().await?;
+        self.prepare_visitor(false).await?;
         let folders = self
             .pages("/aweme/v1/web/collects/list/", "collects_list", &[], None, "folders")
             .await?;
@@ -656,25 +670,42 @@ impl Passport<'_> {
     }
 
     fn visitor_cookie(&self) -> Option<String> {
-        let header = self.jar.cookies(&Url::parse(WWW).ok()?)?;
-        let parts: Vec<_> = header
-            .to_str()
-            .ok()?
-            .split("; ")
-            .filter_map(|v| v.split_once('='))
-            .collect();
-        ["UIFID", "UIFID_TEMP"].into_iter().find_map(|key| {
-            parts
-                .iter()
-                .find(|(k, v)| *k == key && (100..=512).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_hexdigit()))
-                .map(|(_, v)| v.to_string())
+        ["UIFID", "UIFID_TEMP"].into_iter().find_map(|name| {
+            site_cookie(self.jar, name)
+                .filter(|v| (100..=512).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_hexdigit()))
         })
     }
 
-    async fn prepare_visitor(&self) -> Result<()> {
+    async fn prepare_visitor(&self, fresh_guest: bool) -> Result<()> {
         if self.visitor_cookie().is_some() {
             return Ok(());
         }
+        let response = self.visitor_document("visitor-document").await?;
+        if fresh_guest && response.classification == "javascript_initialization_required" {
+            let nonce = site_cookie(self.jar, "__ac_nonce")
+                .filter(|v| valid_ac_nonce(v))
+                .context("official_ac_nonce_missing")?;
+            let signature = super::ac_sign::signature(
+                &nonce,
+                &format!("{WWW}/jingxuan"),
+                sign::UA,
+                chrono::Utc::now().timestamp() as u64,
+            );
+            self.jar.add_cookie_str(
+                &format!("__ac_signature={signature}; Max-Age=31536000; Path=/; Secure; SameSite=None"),
+                &Url::parse(WWW)?,
+            );
+            self.jar.add_cookie_str(
+                &format!("__ac_referer={WWW}/?recommend=1; Max-Age=31536000; Path=/; Secure; SameSite=None"),
+                &Url::parse(WWW)?,
+            );
+            self.visitor_document("visitor-after-ac").await?;
+        }
+        ensure!(self.visitor_cookie().is_some(), "official_visitor_cookie_missing");
+        Ok(())
+    }
+
+    async fn visitor_document(&self, stage: &str) -> Result<super::Captured> {
         let response = capture(
             self.client,
             Platform::Douyin,
@@ -694,19 +725,18 @@ impl Passport<'_> {
                 .header("sec-fetch-mode", "navigate")
                 .header("sec-fetch-site", "same-origin")
                 .header("upgrade-insecure-requests", "1"),
-            "visitor-document",
+            stage,
             self.root,
         )
         .await?;
-        private_headers(self.root, "visitor-document", &response.headers)?;
+        private_headers(self.root, stage, &response.headers)?;
         ensure!(
             response.status == 200
                 && !["platform_rejected", "business_rejected", "verification_required"]
                     .contains(&response.classification),
             "visitor_initialization_rejected"
         );
-        ensure!(self.visitor_cookie().is_some(), "official_visitor_cookie_missing");
-        Ok(())
+        Ok(response)
     }
 
     async fn verify_self(&mut self, expected: Option<&str>) -> Result<()> {
@@ -954,6 +984,23 @@ mod tests {
     }
     #[test]
     fn visitor_payload_and_token_boundaries() {
+        let nonce = "0123456789abcdef01234";
+        assert!(valid_ac_nonce(nonce));
+        for invalid in ["", "short", "0123456789abcdef0123;injected", "0123456789abcdef0123\r\n"] {
+            assert!(!valid_ac_nonce(invalid));
+        }
+        let jar = Jar::default();
+        jar.add_cookie_str(
+            &format!("__ac_nonce={nonce}; Path=/; Secure"),
+            &Url::parse(WWW).unwrap(),
+        );
+        assert_eq!(site_cookie(&jar, "__ac_nonce").as_deref(), Some(nonce));
+        assert!(cookie(&jar, "__ac_nonce").is_none());
+        jar.add_cookie_str(
+            "__ac_nonce=abcdef0123456789abcde; Domain=.douyin.com; Path=/; Secure",
+            &Url::parse(WWW).unwrap(),
+        );
+        assert!(site_cookie(&jar, "__ac_nonce").is_none());
         let payload: Value = serde_json::from_str(&report(1793448101123, "synthetic-uuid", 75.5, 91).unwrap()).unwrap();
         assert_eq!(payload["magic"], 538969122);
         assert_eq!(payload["tspFromClient"], 1793448101123i64);
