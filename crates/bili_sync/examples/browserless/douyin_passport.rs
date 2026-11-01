@@ -288,6 +288,13 @@ pub async fn qrcode(client: &Client, jar: &Jar, args: &super::Args) -> Result<()
         portrait: format!("{}.login", uuid::Uuid::new_v4()),
         counter: 2,
     };
+    if args.douyin_guest_bootstrap {
+        passport.prepare_visitor().await?;
+        println!(
+            "{}",
+            json!({"stage":"guest_visitor_initialized","official_cookie_received":true})
+        );
+    }
     let value = passport
         .call(
             QR_PATH,

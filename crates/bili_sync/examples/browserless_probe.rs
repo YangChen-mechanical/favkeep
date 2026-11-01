@@ -97,6 +97,9 @@ struct Args {
     /// Current Passport SDK fields and freshly minted visitor tokens; no automatic fallback.
     #[arg(long, conflicts_with = "douyin_sso")]
     douyin_passport: bool,
+    /// Explicitly collect the official visitor Cookie before requesting a fresh Passport QR.
+    #[arg(long, requires = "douyin_passport", conflicts_with = "restore_auth")]
+    douyin_guest_bootstrap: bool,
 }
 
 fn trusted(platform: Platform, url: &Url) -> bool {
@@ -412,6 +415,19 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn guest_bootstrap_requires_a_fresh_passport_session() {
+        let args = ["probe", "douyin", "--output-dir", "unused", "--douyin-guest-bootstrap"];
+        assert!(Args::try_parse_from(args).is_err());
+        assert!(Args::try_parse_from(args.into_iter().chain(["--douyin-passport"])).is_ok());
+        assert!(
+            Args::try_parse_from(
+                args.into_iter()
+                    .chain(["--douyin-passport", "--restore-auth", "unused"])
+            )
+            .is_err()
+        );
+    }
     #[test]
     fn api_hosts_and_response_boundaries() {
         let fp = verify_fp();
