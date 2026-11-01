@@ -7,8 +7,8 @@ use serde_json::Value;
 pub use super::media::video_urls;
 use super::{
     Error, Result,
-    browser::Auth,
     media::{media_url, unsupported},
+    native::{Auth, Session},
     valid_id,
 };
 
@@ -34,93 +34,37 @@ pub struct Video {
 }
 
 pub struct Client {
-    api: reqwest::Client,
+    session: Session,
     media: reqwest::Client,
-    ua: String,
-    ms_token: String,
-    fingerprint: String,
 }
-
 impl Client {
     pub async fn new(auth: &Auth) -> Result<Self> {
-        if !valid_id(&auth.identity)
-            || auth.origin != "https://www.douyin.com"
-            || !bounded_ascii(&auth.ua, 1024)
-            || !bounded_ascii(&auth.ms_token, 4096)
-            || !bounded_ascii(&auth.fingerprint, 1024)
-        {
+        if !super::native::valid_token(&auth.ms_token) {
             return Err(Error::InvalidData);
         }
-        let mut headers = header::HeaderMap::new();
-        headers.insert(header::USER_AGENT, auth.ua.parse().map_err(|_| Error::InvalidData)?);
-        headers.insert(
-            header::REFERER,
-            header::HeaderValue::from_static("https://www.douyin.com/"),
-        );
         let media = reqwest::Client::builder()
-            .default_headers(headers.clone())
+            .user_agent(super::native::UA)
+            .default_headers(header::HeaderMap::from_iter([(
+                header::REFERER,
+                header::HeaderValue::from_static("https://www.douyin.com/"),
+            )]))
+            .cookie_store(false)
             .connect_timeout(Duration::from_secs(20))
             .read_timeout(Duration::from_secs(20))
             .redirect(Policy::none())
             .build()
             .map_err(|_| Error::Network)?;
-        let cookie_header = auth.cookie_header()?;
-        // shortcut: pinned F2 uses an Argus placeholder, capture real browser headers if the gateway starts validating it.
-        headers.insert("x-tt-argus", header::HeaderValue::from_static("1"));
-        let uifid = |name| {
-            cookie_header
-                .split("; ")
-                .filter_map(|part| part.split_once('='))
-                .find_map(|(key, value)| (key == name && !value.is_empty()).then_some(value))
-        };
-        if let Some(value) = uifid("UIFID").or_else(|| uifid("UIFID_TEMP")) {
-            let mut value = header::HeaderValue::from_str(value).map_err(|_| Error::InvalidData)?;
-            value.set_sensitive(true);
-            headers.insert("uifid", value);
-        }
-        let mut cookie = header::HeaderValue::from_str(&cookie_header).map_err(|_| Error::InvalidData)?;
-        cookie.set_sensitive(true);
-        headers.insert(header::COOKIE, cookie);
-        let api = reqwest::Client::builder()
-            .default_headers(headers)
-            .timeout(Duration::from_secs(20))
-            .redirect(Policy::none())
-            .build()
-            .map_err(|_| Error::Network)?;
         Ok(Self {
-            api,
+            session: Session::new(Some(auth))?,
             media,
-            ua: auth.ua.clone(),
-            ms_token: auth.ms_token.clone(),
-            fingerprint: auth.fingerprint.clone(),
         })
     }
-
     async fn get(&self, path: &str, params: &[(&str, String)]) -> Result<Value> {
-        let query = base_query(&self.ms_token, params)?;
-        let signature = super::sign::sign(&query, "", &self.ua, &self.fingerprint);
-        let encoded_signature =
-            serde_urlencoded::to_string([("a_bogus", signature)]).map_err(|_| Error::InvalidData)?;
-        let mut response = self
-            .api
-            .get(format!("https://www.douyin.com{path}?{query}&{encoded_signature}"))
-            .send()
-            .await
-            .map_err(|_| Error::Network)?;
-        http_status(response.status())?;
-        let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| Error::Network)? {
-            if chunk.len() > 8 * 1024 * 1024 - body.len() {
-                return Err(Error::InvalidData);
-            }
-            body.extend_from_slice(&chunk);
-        }
-        let payload: Value = serde_json::from_slice(&body).map_err(|_| Error::InvalidData)?;
-        tracing::debug!(endpoint = path, keys = ?payload.as_object().map(|p| p.keys().collect::<Vec<_>>()), "received API shape");
-        business_status(&payload)?;
-        Ok(payload)
+        self.session.get(path, params).await
     }
-
+    pub async fn verify(&self, expected: &str) -> Result<Auth> {
+        self.session.verify(Some(expected)).await
+    }
     async fn pages(&self, path: &str, key: &str, folder: Option<&Folder>) -> Result<Vec<Value>> {
         let mut scan = Scan::default();
         for _ in 0..10_000 {
@@ -195,7 +139,7 @@ impl Client {
     }
 
     pub async fn media_response(&self, url: &str) -> Result<reqwest::Response> {
-        let mut url = media_url(url).ok_or(Error::InvalidData)?;
+        let mut url = trusted_media_url(url).ok_or(Error::InvalidData)?;
         for _ in 0..6 {
             let response = self.media.get(url.clone()).send().await.map_err(|_| Error::Network)?;
             if response.status().is_redirection() {
@@ -205,7 +149,7 @@ impl Client {
                     .and_then(|h| h.to_str().ok())
                     .and_then(|location| url.join(location).ok())
                     .ok_or(Error::Rejected)?;
-                url = media_url(next.as_str()).ok_or(Error::Rejected)?;
+                url = trusted_media_url(next.as_str()).ok_or(Error::Rejected)?;
                 continue;
             }
             http_status(response.status())?;
@@ -215,39 +159,8 @@ impl Client {
     }
 }
 
-fn base_query(ms_token: &str, params: &[(&str, String)]) -> Result<String> {
-    // Keep the pinned BaseRequestModel order: these exact encoded bytes are signed and sent.
-    let mut query: Vec<(&str, &str)> = vec![
-        ("device_platform", "webapp"),
-        ("aid", "6383"),
-        ("channel", "channel_pc_web"),
-        ("pc_client_type", "1"),
-        ("publish_video_strategy_type", "2"),
-        ("pc_libra_divert", "Windows"),
-        ("version_code", "290100"),
-        ("version_name", "29.1.0"),
-        ("cookie_enabled", "true"),
-        ("screen_width", "1920"),
-        ("screen_height", "1080"),
-        ("browser_language", "zh-CN"),
-        ("browser_platform", "Win32"),
-        ("browser_name", "Edge"),
-        ("browser_version", "130.0.0.0"),
-        ("browser_online", "true"),
-        ("engine_name", "Blink"),
-        ("engine_version", "130.0.0.0"),
-        ("os_name", "Windows"),
-        ("os_version", "10"),
-        ("cpu_core_num", "12"),
-        ("device_memory", "8"),
-        ("platform", "PC"),
-        ("downlink", "10"),
-        ("effective_type", "4g"),
-        ("round_trip_time", "100"),
-        ("msToken", ms_token),
-    ];
-    query.extend(params.iter().map(|(key, value)| (*key, value.as_str())));
-    serde_urlencoded::to_string(query).map_err(|_| Error::InvalidData)
+fn trusted_media_url(raw: &str) -> Option<reqwest::Url> {
+    media_url(raw).filter(|u| matches!(u.host_str(), Some("v26-web.douyinvod.com" | "v11-weba.douyinvod.com")))
 }
 
 fn http_status(status: reqwest::StatusCode) -> Result<()> {
@@ -256,10 +169,6 @@ fn http_status(status: reqwest::StatusCode) -> Result<()> {
         500..=599 => Err(Error::Network),
         _ => Err(Error::Rejected),
     }
-}
-
-fn bounded_ascii(value: &str, max: usize) -> bool {
-    !value.is_empty() && value.len() <= max && value.bytes().all(|b| (32..127).contains(&b))
 }
 
 fn business_status(payload: &Value) -> Result<()> {
@@ -389,23 +298,25 @@ mod tests {
             identity: "self_123".into(),
             ua: "test-agent".into(),
             origin: "https://www.douyin.com".into(),
-            ms_token: "token".into(),
+            ms_token: "A".repeat(164),
             fingerprint: "1920|1080".into(),
             cookies: vec![json!({"domain":".douyin.com","name":"sessionid","value":"secret"})],
         };
         assert!(Client::new(&auth).await.is_ok());
+        let mut legacy = auth.clone();
+        legacy.fingerprint = "ignored legacy setting".into();
+        assert!(Client::new(&legacy).await.is_ok());
         for bad in [
             "".to_owned(),
             "非ASCII".to_owned(),
             "x".repeat(4097),
             "bad\nheader".to_owned(),
         ] {
-            for field in ["ua", "ms_token", "fingerprint"] {
+            for field in ["ua", "ms_token"] {
                 let mut auth = auth.clone();
                 match field {
                     "ua" => auth.ua = bad.clone(),
-                    "ms_token" => auth.ms_token = bad.clone(),
-                    _ => auth.fingerprint = bad.clone(),
+                    _ => auth.ms_token = bad.clone(),
                 }
                 assert!(matches!(Client::new(&auth).await, Err(Error::InvalidData)));
             }
@@ -551,31 +462,12 @@ mod tests {
     }
 
     #[test]
-    fn query_keeps_pinned_order_and_encodes_token_and_ids_once() {
-        let query = base_query(
-            "a+b/c=",
-            &[
-                ("cursor", "0".into()),
-                ("count", "20".into()),
-                ("collects_id", "id_1".into()),
-            ],
-        )
-        .unwrap();
-        assert!(query.starts_with("device_platform=webapp&aid=6383&channel=channel_pc_web&pc_client_type=1&publish_video_strategy_type=2&pc_libra_divert=Windows&"));
-        assert!(query.ends_with("&msToken=a%2Bb%2Fc%3D&cursor=0&count=20&collects_id=id_1"));
-        assert_eq!(query.matches("msToken=").count(), 1);
-    }
-
-    #[test]
     fn media_hosts_are_exact_suffixes_with_https_and_no_credentials_or_other_ports() {
-        for url in [
-            "https://v3-web.douyinvod.com/x",
-            "https://v5-dy-o.zjcdn.com/x",
-            "https://video.douyin.com/x",
-        ] {
-            assert!(media_url(url).is_some());
+        for url in ["https://v26-web.douyinvod.com/x", "https://v11-weba.douyinvod.com/x"] {
+            assert!(trusted_media_url(url).is_some());
         }
         for url in [
+            "https://unconfirmed.douyinvod.com/x",
             "https://douyin.com.evil.test/x",
             "https://evildouyin.com/x",
             "https://127.0.0.1/x",
@@ -585,7 +477,7 @@ mod tests {
             "https://user@video.douyin.com/x",
             "https://video.douyin.com:444/x",
         ] {
-            assert!(media_url(url).is_none());
+            assert!(trusted_media_url(url).is_none());
         }
     }
 

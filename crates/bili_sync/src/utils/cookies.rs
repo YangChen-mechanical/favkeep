@@ -5,19 +5,9 @@ use parking_lot::Mutex;
 use reqwest::{Url, cookie::CookieStore as HttpCookies, header::HeaderValue};
 use serde_json::{Value, json};
 
-#[derive(Default)]
-pub(super) struct Jar(Mutex<CookieStore>);
-
-fn allowed_domain(domain: &str) -> bool {
-    [
-        "rednote.com",
-        "www.rednote.com",
-        "webapi.rednote.com",
-        "xiaohongshu.com",
-        "www.xiaohongshu.com",
-        "edith.xiaohongshu.com",
-    ]
-    .contains(&domain.trim_start_matches('.'))
+pub(crate) struct Jar {
+    store: Mutex<CookieStore>,
+    domains: &'static [&'static str],
 }
 
 fn valid_value(name: &str, value: &str) -> bool {
@@ -29,6 +19,17 @@ fn valid_value(name: &str, value: &str) -> bool {
 }
 
 impl Jar {
+    pub fn new(domains: &'static [&'static str]) -> Self {
+        Self {
+            store: Mutex::new(CookieStore::default()),
+            domains,
+        }
+    }
+
+    fn allowed_domain(&self, domain: &str) -> bool {
+        self.domains.contains(&domain.trim_start_matches('.'))
+    }
+
     pub fn load(&self, values: &[Value]) -> Result<()> {
         if values.len() > 512 {
             return Err(Error::InvalidData);
@@ -36,7 +37,7 @@ impl Jar {
         let mut store = CookieStore::default();
         for value in values {
             let domain = value["domain"].as_str().ok_or(Error::InvalidData)?;
-            if !allowed_domain(domain) {
+            if !self.allowed_domain(domain) {
                 return Err(Error::InvalidData);
             }
             let name = value["name"].as_str().ok_or(Error::InvalidData)?;
@@ -79,24 +80,28 @@ impl Jar {
                 .insert_raw(&cookie.build(), &url)
                 .map_err(|_| Error::InvalidData)?;
         }
-        *self.0.lock() = store;
+        *self.store.lock() = store;
         Ok(())
     }
 
     pub fn set(&self, text: &str, url: &Url) -> Result<()> {
         let raw = Cookie::parse(text.to_owned()).map_err(|_| Error::InvalidData)?;
-        if !allowed_domain(url.host_str().unwrap_or(""))
+        if url.scheme() != "https"
+            || !self.allowed_domain(url.host_str().unwrap_or(""))
             || !valid_value(raw.name(), raw.value())
-            || raw.domain().is_some_and(|d| !allowed_domain(d))
+            || raw.domain().is_some_and(|d| !self.allowed_domain(d))
         {
             return Err(Error::InvalidData);
         }
-        self.0.lock().insert_raw(&raw, url).map_err(|_| Error::InvalidData)?;
+        self.store
+            .lock()
+            .insert_raw(&raw, url)
+            .map_err(|_| Error::InvalidData)?;
         Ok(())
     }
 
     pub fn value(&self, name: &str, url: &Url) -> Result<Option<String>> {
-        let store = self.0.lock();
+        let store = self.store.lock();
         let mut matches = store.matches(url).into_iter().filter(|c| c.name() == name);
         let Some(first) = matches.next() else {
             return Ok(None);
@@ -108,7 +113,7 @@ impl Jar {
     }
 
     pub fn snapshot(&self) -> Vec<Value> {
-        let store = self.0.lock();
+        let store = self.store.lock();
         let mut values: Vec<_> = store
             .iter_unexpired()
             .map(|c| {
@@ -146,7 +151,10 @@ impl HttpCookies for Jar {
         }
     }
     fn cookies(&self, url: &Url) -> Option<HeaderValue> {
-        let store = self.0.lock();
+        if url.scheme() != "https" || !self.allowed_domain(url.host_str().unwrap_or("")) {
+            return None;
+        }
+        let store = self.store.lock();
         let mut cookies = store.matches(url);
         cookies.sort_by_key(|c| std::cmp::Reverse(c.path.len()));
         let text = cookies
@@ -170,14 +178,14 @@ mod tests {
     fn scopes_expiration_and_refresh_survive_restart_without_cross_platform_leaks() {
         let www = Url::parse("https://www.rednote.com/").unwrap();
         let api = Url::parse("https://webapi.rednote.com/api/test").unwrap();
-        let jar = Jar::default();
+        let jar = Jar::new(&["rednote.com", "www.rednote.com", "webapi.rednote.com"]);
         jar.set(
             "web_session=old; Domain=.rednote.com; Path=/; Secure; HttpOnly; Max-Age=600; SameSite=Lax",
             &www,
         )
         .unwrap();
         jar.set("host_only=private; Path=/api; Secure", &api).unwrap();
-        let restored = Jar::default();
+        let restored = Jar::new(&["rednote.com", "www.rednote.com", "webapi.rednote.com"]);
         restored.load(&jar.snapshot()).unwrap();
         assert_eq!(restored.value("web_session", &api).unwrap().as_deref(), Some("old"));
         assert!(restored.value("host_only", &www).unwrap().is_none());
@@ -209,7 +217,11 @@ mod tests {
         assert!(restored.value("web_session", &api).unwrap().is_none());
         let mut invalid = jar.snapshot();
         invalid[0]["domain"] = json!(".com");
-        assert!(Jar::default().load(&invalid).is_err());
+        assert!(
+            Jar::new(&["rednote.com", "www.rednote.com", "webapi.rednote.com"])
+                .load(&invalid)
+                .is_err()
+        );
         assert!(
             jar.set("web_session=foreign; Domain=.douyin.com; Path=/", &www)
                 .is_err()

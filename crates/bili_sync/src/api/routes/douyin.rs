@@ -12,7 +12,7 @@ use crate::api::{
     wrapper::{ApiError, ApiResponse},
 };
 use crate::config::VersionedConfig;
-use crate::douyin::{self, browser::Auth, runtime, store};
+use crate::douyin::{self, native::Auth, runtime, store};
 
 pub(super) fn router() -> Router {
     Router::new()
@@ -41,7 +41,11 @@ fn time(value: Option<i64>) -> Option<String> {
 
 async fn status(Extension(db): Extension<DatabaseConnection>) -> Result<ApiResponse<Value>, ApiError> {
     let account = if let Ok(auth) = saved() {
-        Some(store::ensure_account(&db, &auth.identity).await?)
+        if store::bound_identity(&db).await?.as_deref() == Some(auth.identity.as_str()) {
+            Some(store::account(&db, &auth.identity).await?)
+        } else {
+            None
+        }
     } else {
         None
     };

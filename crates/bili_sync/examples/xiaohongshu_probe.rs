@@ -1,8 +1,10 @@
-//! Isolated feasibility gate: no application database, scheduler or production profile.
-#[path = "../src/douyin/browser.rs"]
+#[path = "../src/utils/private.rs"]
+mod private;
+// Isolated feasibility gate: no application database, scheduler or production profile.
+#[path = "legacy/browser.rs"]
 #[allow(dead_code)]
 mod browser;
-#[path = "../src/douyin/core.rs"]
+#[path = "legacy/core.rs"]
 #[allow(dead_code)]
 mod core;
 #[path = "../src/resources.rs"]

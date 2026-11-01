@@ -1,9 +1,11 @@
-//! Isolated validation entry point; never opens the application database.
-#[path = "../src/douyin/browser.rs"]
+#[path = "../src/utils/private.rs"]
+mod private;
+// Isolated validation entry point; never opens the application database.
+#[path = "legacy/browser.rs"]
 mod browser;
-#[path = "../src/douyin/client.rs"]
+#[path = "legacy/client.rs"]
 mod client;
-#[path = "../src/douyin/core.rs"]
+#[path = "legacy/core.rs"]
 #[allow(dead_code)]
 mod core;
 #[path = "../src/douyin/media.rs"]
@@ -11,7 +13,7 @@ mod media;
 #[path = "../src/resources.rs"]
 #[allow(dead_code)]
 mod resources;
-#[path = "../src/douyin/sign.rs"]
+#[path = "browserless/legacy_sign.rs"]
 mod sign;
 
 use std::path::{Path, PathBuf};

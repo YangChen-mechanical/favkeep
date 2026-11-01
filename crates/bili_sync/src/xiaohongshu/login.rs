@@ -8,7 +8,7 @@ use crate::{
     api::GenerateQrcodeResponse,
     auth::AuthState,
     config::{CONFIG_DIR, VersionedConfig},
-    douyin::browser::{private_dir, write_private},
+    utils::private::{private_dir, write_private},
 };
 use std::{
     path::{Path, PathBuf},

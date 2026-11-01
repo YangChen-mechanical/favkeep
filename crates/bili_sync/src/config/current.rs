@@ -133,9 +133,6 @@ impl Config {
         if !PathBuf::from(&self.douyin.path).is_absolute() {
             errors.push("抖音视频保存路径应为绝对路径");
         }
-        if !PathBuf::from(&self.douyin.browser).is_absolute() {
-            errors.push("抖音浏览器路径应为绝对路径");
-        }
         if !self.upper_path.is_absolute() {
             errors.push("up 主头像保存的路径应为绝对路径");
         }
@@ -260,6 +257,7 @@ mod tests {
         assert!(PathBuf::from(&config.douyin.path).is_absolute());
         assert!(config.check().is_ok());
         config.xiaohongshu.browser = "ignored legacy setting".into();
+        config.douyin.browser = "ignored legacy setting".into();
         assert!(config.check().is_ok());
         config.douyin.interval = 0;
         assert!(config.check().is_err());

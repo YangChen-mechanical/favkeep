@@ -45,7 +45,14 @@ impl Auth {
         {
             return Err(Error::InvalidData);
         }
-        let jar = Jar::default();
+        let jar = Jar::new(&[
+            "rednote.com",
+            "www.rednote.com",
+            "webapi.rednote.com",
+            "xiaohongshu.com",
+            "www.xiaohongshu.com",
+            "edith.xiaohongshu.com",
+        ]);
         jar.load(&auth.cookies)?;
         if jar
             .value(
@@ -88,7 +95,14 @@ impl Session {
         if ua.is_empty() || ua.len() > 1024 || !ua.bytes().all(|b| (32..127).contains(&b)) {
             return Err(Error::InvalidData);
         }
-        let jar = Arc::new(Jar::default());
+        let jar = Arc::new(Jar::new(&[
+            "rednote.com",
+            "www.rednote.com",
+            "webapi.rednote.com",
+            "xiaohongshu.com",
+            "www.xiaohongshu.com",
+            "edith.xiaohongshu.com",
+        ]));
         if let Some(saved) = saved {
             jar.load(&saved.cookies)?;
         }

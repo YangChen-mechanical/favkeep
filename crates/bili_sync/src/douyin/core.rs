@@ -22,8 +22,6 @@ pub enum Error {
     IdentityUnverified,
     #[error("account_changed")]
     AccountChanged,
-    #[error("browser_failed")]
-    Browser,
     #[error("network_failed")]
     Network,
     #[error("private_file_failed")]
@@ -50,11 +48,10 @@ impl Error {
             Self::AccountChanged => "与已绑定账号不符，未保存新账号",
             Self::InvalidData => "平台数据无效，本夹未提交",
             Self::Incomplete => "分页扫描不完整，本夹未提交，请稍后重试",
-            Self::Browser => "浏览器运行失败，请检查浏览器配置后重试",
             Self::Network => "网络请求失败或超时，请稍后重试",
             Self::File => "本地文件或数据库操作失败，请检查权限与存储",
             Self::MediaUnavailable => "媒体不可用或校验失败，请重试失败项",
-            Self::TokenUnavailable => "未取得实时浏览器令牌，请稍后重试",
+            Self::TokenUnavailable => "未取得官方会话令牌，请稍后重试",
         }
     }
 }

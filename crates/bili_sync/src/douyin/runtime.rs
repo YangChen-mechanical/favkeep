@@ -8,12 +8,13 @@ use std::time::Duration;
 use sea_orm::DatabaseConnection;
 use tokio::io::AsyncWriteExt;
 
-use super::browser::{Auth, Session, private_dir, write_private};
 use super::client::{Client, Folder};
+use super::native::{Auth, Session};
 use super::progress::{self, Activity};
 use super::store::{self, AccountOutcome, Outcome};
 use super::{Error, RUNNING, Result};
 use crate::config::{ARGS, Config};
+use crate::utils::private::{private_dir, write_private};
 
 pub static NEXT_RUN: AtomicI64 = AtomicI64::new(0);
 
@@ -38,19 +39,20 @@ pub async fn refresh(db: &DatabaseConnection, config: &Config) -> Result<()> {
             }
             let result = async {
                 activity.stage("restoring", None, None);
-                let (session, auth) = restore(config).await?;
-                let fetched = async {
+                let auth = restore(config).await?;
+                async {
                     activity.stage("folders", None, None);
-                    let folders = Client::new(&auth).await?.folders().await?;
+                    let client = Client::new(&auth).await?;
+                    let folders = client.folders().await?;
+                    let fresh = client.verify(&auth.identity).await?;
+                    write_private(&super::login::root().join("auth.json"), &fresh)?;
                     store::sync_folders(db, &auth.identity, &folders)
                         .await
                         .map_err(database)?;
                     info!("[抖音] 收藏夹列表已更新，共 {} 个", folders.len());
                     Ok(())
                 }
-                .await;
-                let closed = session.close().await;
-                fetched.and(closed)
+                .await
             }
             .await;
             // Listing folders cannot reset rejection history; only a complete scan cycle can.
@@ -82,25 +84,15 @@ pub async fn refresh(db: &DatabaseConnection, config: &Config) -> Result<()> {
     result
 }
 
-pub async fn restore(config: &Config) -> Result<(Session, Auth)> {
+pub async fn restore(_config: &Config) -> Result<Auth> {
     info!("[抖音] 正在恢复旧会话并验证账号");
-    let root = super::login::root();
-    let saved = Auth::read(&root.join("auth.json"))?;
-    let session = Session::launch(&root, Path::new(&config.douyin.browser)).await?;
-    match session.restore(&saved, false).await {
-        Ok(auth) => {
-            if let Err(error) = write_private(&root.join("auth.json"), &auth) {
-                let _ = session.close().await;
-                return Err(error);
-            }
-            info!("[抖音] 旧会话已恢复，刷新后的凭据已安全保存");
-            Ok((session, auth))
-        }
-        Err(error) => {
-            let _ = session.close().await;
-            Err(error)
-        }
-    }
+    let path = super::login::root().join("auth.json");
+    let saved = Auth::read(&path)?;
+    let session = Session::new(Some(&saved))?;
+    let fresh = session.restore(&saved).await?;
+    write_private(&path, &fresh)?;
+    info!("[抖音] 旧会话已恢复，刷新后的凭据已安全保存");
+    Ok(fresh)
 }
 
 pub async fn run(db: &DatabaseConnection, config: &Config) -> Result<()> {
@@ -123,10 +115,8 @@ pub async fn run(db: &DatabaseConnection, config: &Config) -> Result<()> {
         }
         let round = async {
             activity.stage("restoring", None, None);
-            let (session, auth) = restore(config).await?;
-            let round = scan_and_download(db, config, &auth, &activity).await;
-            let closed = session.close().await;
-            round.and(closed)
+            let auth = restore(config).await?;
+            scan_and_download(db, config, &auth, &activity).await
         }
         .await;
         // Count remaining eligible work before account_outcome applies a pause or cooldown.
@@ -161,7 +151,7 @@ pub async fn resume(db: &DatabaseConnection, config: &Config) -> Result<()> {
                 return Err(Error::Paused);
             }
             activity.stage("restoring", None, None);
-            let (session, fresh) = match restore(config).await {
+            let fresh = match restore(config).await {
                 Ok(restored) => restored,
                 Err(error) => {
                     store::account_outcome(
@@ -175,7 +165,6 @@ pub async fn resume(db: &DatabaseConnection, config: &Config) -> Result<()> {
                     return Err(error);
                 }
             };
-            session.close().await?;
             store::resume_account(db, &fresh.identity).await.map_err(database)?;
             Ok(())
         }
@@ -240,6 +229,7 @@ async fn scan_and_download(
                 return Err(error);
             }
         };
+        client.verify(&auth.identity).await?;
         let committed = store::commit_scan(db, &auth.identity, &folder.id, folder.revision, &items)
             .await
             .map_err(|error| {
@@ -333,6 +323,8 @@ async fn scan_and_download(
             }
         }
     }
+    let fresh = client.verify(&auth.identity).await?;
+    write_private(&super::login::root().join("auth.json"), &fresh)?;
     failure.map_or(Ok(()), Err)
 }
 

@@ -3,11 +3,11 @@ use std::collections::HashSet;
 use reqwest::Url;
 use serde_json::Value;
 
-pub(super) fn unsupported(row: &Value) -> bool {
+pub(crate) fn unsupported(row: &Value) -> bool {
     row["aweme_type"].as_u64() == Some(68) || row["images"].as_array().is_some_and(|images| !images.is_empty())
 }
 
-pub(super) fn media_url(raw: &str) -> Option<Url> {
+pub(crate) fn media_url(raw: &str) -> Option<Url> {
     let url = Url::parse(raw).ok()?;
     let host = url.domain()?;
     let official = [

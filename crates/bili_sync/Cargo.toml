@@ -10,6 +10,7 @@ readme = "../../README.md"
 build = "build.rs"
 
 [dependencies]
+ring = "=0.17.14"
 argon2 = { workspace = true }
 async-trait = { workspace = true }
 rpassword = { workspace = true }
@@ -23,7 +24,6 @@ base64 = { workspace = true }
 bili_sync_entity = { workspace = true }
 bili_sync_migration = { workspace = true }
 chrono = { workspace = true }
-chromiumoxide = { workspace = true }
 clap = { workspace = true }
 cookie = { workspace = true }
 cookie_store = { workspace = true }
@@ -86,4 +86,4 @@ name = "bili-sync-rs"
 path = "src/main.rs"
 
 [dev-dependencies]
-ring = "=0.17.14"
+chromiumoxide = { workspace = true }

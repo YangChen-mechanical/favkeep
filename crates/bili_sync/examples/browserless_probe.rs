@@ -1,18 +1,17 @@
 //! Isolated browser-free login/restore protocol gate; never opens an application database or imports browser sessions.
-#[path = "browserless/ac_sign.rs"]
-mod ac_sign;
+use douyin_app::native::ac_sign;
 #[path = "../src/utils/rc4.rs"]
 mod codec;
-#[path = "../src/douyin/media.rs"]
-mod douyin_media;
+#[path = "browserless/douyin_app.rs"]
+mod douyin_app;
+use douyin_app::media as douyin_media;
 #[path = "browserless/douyin_passport.rs"]
 mod douyin_passport;
-#[path = "../src/douyin/sign.rs"]
+#[path = "browserless/legacy_sign.rs"]
 mod douyin_sign;
 #[path = "browserless/media.rs"]
 mod media;
-#[path = "browserless/passport_sign.rs"]
-mod passport_sign;
+use douyin_app::native::passport_sign;
 #[path = "browserless/private.rs"]
 mod private;
 #[path = "browserless/xhs.rs"]
@@ -104,6 +103,9 @@ struct Args {
     /// Explicitly collect the official visitor Cookie before requesting a fresh Passport QR.
     #[arg(long, requires = "douyin_passport", conflicts_with = "restore_auth")]
     douyin_guest_bootstrap: bool,
+    /// Validate the production native client after the isolated protocol gate.
+    #[arg(long, requires = "douyin_passport")]
+    douyin_application: bool,
 }
 
 fn trusted(platform: Platform, url: &Url) -> bool {
@@ -257,6 +259,13 @@ async fn capture(
 }
 
 async fn run(args: &Args) -> Result<()> {
+    if args.douyin_application {
+        ensure!(
+            matches!(args.platform, Platform::Douyin) && (args.login || args.restore_auth.is_some()),
+            "application_probe_requires_Douyin_login_or_restore"
+        );
+        return douyin_app::run(args).await;
+    }
     let platform = args.platform;
     let jar = Arc::new(Jar::default());
     let client =

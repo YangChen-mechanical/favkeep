@@ -5,6 +5,7 @@ use std::{
 };
 
 use tokio::sync::{Mutex, watch};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     api::GenerateQrcodeResponse,
@@ -14,10 +15,12 @@ use crate::{
 
 use super::{
     Error, RUNNING, Result,
-    browser::{Auth, Session, private_dir, write_private},
+    native::{Auth, Session},
     progress,
     store::{self, AccountOutcome},
 };
+
+use crate::utils::private::write_private;
 
 static JOB: Mutex<Option<LoginJob>> = Mutex::const_new(None);
 
@@ -25,6 +28,7 @@ struct LoginJob {
     owner: String,
     force_qr: bool,
     state: watch::Receiver<GenerateQrcodeResponse>,
+    cancel: CancellationToken,
 }
 
 impl LoginJob {
@@ -63,10 +67,8 @@ async fn import_session_inner(db: &sea_orm::DatabaseConnection, source: &Path) -
     let bound = store::bound_identity(db).await.map_err(|_| Error::File)?;
     let previous = Auth::read(&path).ok().map(|auth| auth.identity);
     expected_identity(Some(&candidate.identity), bound.clone().or(previous))?;
-    let browser = VersionedConfig::get().read().douyin.browser.clone();
-    let session = Session::launch(&root(), Path::new(&browser)).await?;
-    let result = session.restore(&candidate, true).await;
-    let closed = session.close().await;
+    let session = Session::new(Some(&candidate))?;
+    let result = session.restore(&candidate).await;
     if let (Some(identity), Err(error)) = (bound.as_deref(), &result)
         && let Some(outcome) = platform_outcome(error, false)
     {
@@ -75,12 +77,12 @@ async fn import_session_inner(db: &sea_orm::DatabaseConnection, source: &Path) -
             .map_err(|_| Error::File)?;
     }
     let auth = result?;
-    closed?;
     store::ensure_account(db, &auth.identity).await.map_err(binding_error)?;
     write_private(&path, &auth)
 }
 
 async fn check_cooldown(db: &sea_orm::DatabaseConnection) -> Result<()> {
+    login_gate(&root().join("login-state.json"), chrono::Utc::now().timestamp())?;
     if let Some(identity) = store::bound_identity(db).await.map_err(|_| Error::File)? {
         let account = store::account(db, &identity).await.map_err(|_| Error::File)?;
         if account
@@ -108,6 +110,7 @@ pub async fn generate(owner: String, auth_state: Arc<AuthState>, force_qr: bool)
     let mut job = JOB.lock().await;
     if let Some(current) = job.as_ref()
         && current.state.borrow().status == Some("pending")
+        && !current.cancel.is_cancelled()
     {
         if current.owner != owner || current.force_qr != force_qr {
             progress::report_error("连接账号", &Error::Busy);
@@ -116,6 +119,7 @@ pub async fn generate(owner: String, auth_state: Arc<AuthState>, force_qr: bool)
         info!("[抖音] 继续已有登录任务");
         return Ok(current.state.borrow().clone());
     }
+    let cancel = CancellationToken::new();
     let guard = RUNNING.try_lock().ok();
     if guard.is_none() {
         info!("[抖音] 登录请求已接收，正在等待账号锁");
@@ -138,6 +142,7 @@ pub async fn generate(owner: String, auth_state: Arc<AuthState>, force_qr: bool)
         owner: owner.clone(),
         force_qr,
         state: rx,
+        cancel: cancel.clone(),
     });
     tokio::spawn(async move {
         let result = async {
@@ -145,6 +150,7 @@ pub async fn generate(owner: String, auth_state: Arc<AuthState>, force_qr: bool)
                 Some(guard) => guard,
                 None => tokio::select! {
                     _ = auth_state.wait_revoked(&owner) => return Err(Error::LoginExpired),
+                    _ = cancel.cancelled() => return Err(Error::LoginExpired),
                     guard = RUNNING.lock() => guard,
                 },
             };
@@ -158,7 +164,7 @@ pub async fn generate(owner: String, auth_state: Arc<AuthState>, force_qr: bool)
                         "正在恢复抖音会话或准备二维码"
                     });
                 });
-                connect(&owner, &auth_state, &tx, force_qr, &activity).await
+                connect(&owner, &auth_state, &tx, &cancel, force_qr, &activity).await
             }
             .await;
             activity.finish(&result);
@@ -170,20 +176,25 @@ pub async fn generate(owner: String, auth_state: Arc<AuthState>, force_qr: bool)
             Ok(()) => ("success", "抖音已连接"),
             Err(Error::Challenge) => (
                 "verification_required",
-                "抖音要求浏览器验证，已安全暂停，请在服务器本机处理后重试",
+                "抖音要求安全验证，已暂停，请按平台提示处理后重试",
             ),
             Err(Error::AccountChanged) => ("account_changed", "抖音账号与已连接账号不同，未保存新账号"),
             Err(Error::LoginExpired) => ("expired", "二维码或管理员会话已过期，请重新生成"),
             Err(Error::Rejected) => ("failed", "抖音拒绝了请求，已暂停，请稍后重试"),
             Err(Error::Paused) => ("failed", "抖音正在冷却，请等待后再验证连接"),
-            Err(Error::TokenUnavailable) => ("failed", "未取得实时浏览器令牌，请稍后重试"),
+            Err(Error::TokenUnavailable) => ("failed", "未取得官方会话令牌，请稍后重试"),
             Err(Error::IdentityUnverified) => ("failed", "未取得抖音官方当前账号响应，未保存凭据"),
-            Err(_) => ("failed", "抖音连接失败，请检查系统浏览器和私有目录配置后重试"),
+            Err(_) => ("failed", "抖音连接失败，请检查网络和私有目录权限后重试"),
         };
         tx.send_modify(|state| {
-            state.status = Some(status);
-            state.message = Some(message);
+            state.status = Some(if cancel.is_cancelled() { "cancelled" } else { status });
+            state.message = Some(if cancel.is_cancelled() {
+                "登录已取消，原凭据保留"
+            } else {
+                message
+            });
             state.image = None;
+            state.url.clear();
         });
     });
     Ok(response)
@@ -193,17 +204,97 @@ pub async fn poll(owner: &str, key: &str) -> Result<GenerateQrcodeResponse> {
     JOB.lock().await.as_ref().ok_or(Error::InvalidData)?.status(owner, key)
 }
 
+pub async fn cancel(owner: &str, key: &str) -> Result<GenerateQrcodeResponse> {
+    let job = JOB.lock().await;
+    let job = job.as_ref().ok_or(Error::InvalidData)?;
+    let mut state = job.status(owner, key)?;
+    job.cancel.cancel();
+    state.status = Some("cancelled");
+    state.url.clear();
+    state.image = None;
+    Ok(state)
+}
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct LoginGate {
+    rejections: u8,
+    next_allowed_at: i64,
+}
+
+fn read_gate(path: &Path) -> Result<LoginGate> {
+    if !path.try_exists().map_err(Error::from)? {
+        return Ok(LoginGate::default());
+    }
+    if std::fs::metadata(path).map_err(Error::from)?.len() > 1024 {
+        return Err(Error::InvalidData);
+    }
+    serde_json::from_slice(&std::fs::read(path).map_err(Error::from)?).map_err(|_| Error::InvalidData)
+}
+
+fn login_gate(path: &Path, now: i64) -> Result<()> {
+    if read_gate(path)?.next_allowed_at > now {
+        Err(Error::Paused)
+    } else {
+        Ok(())
+    }
+}
+
+fn record_login_failure(path: &Path, error: &Error, interval: u64, now: i64) -> Result<()> {
+    if matches!(error, Error::Rejected | Error::Challenge | Error::IdentityUnverified) {
+        let mut gate = read_gate(path)?;
+        gate.rejections = gate.rejections.saturating_add(1).min(3);
+        gate.next_allowed_at = now.saturating_add(i64::try_from(interval).unwrap_or(i64::MAX));
+        write_private(path, &gate)?;
+    }
+    Ok(())
+}
+
+async fn persist_verified(
+    owner: &str,
+    state: &AuthState,
+    cancel: &CancellationToken,
+    path: &Path,
+    auth: &Auth,
+) -> Result<()> {
+    async fn owner_valid(owner: &str, state: &AuthState, cancel: &CancellationToken) -> Result<()> {
+        if cancel.is_cancelled()
+            || state
+                .valid_hash(owner)
+                .await
+                .map_err(|_| Error::LoginExpired)?
+                .is_none()
+        {
+            Err(Error::LoginExpired)
+        } else {
+            Ok(())
+        }
+    }
+    owner_valid(owner, state, cancel).await?;
+    store::ensure_account(&state.db, &auth.identity)
+        .await
+        .map_err(binding_error)?;
+    owner_valid(owner, state, cancel).await?;
+    write_private(&root().join("login-state.json"), &LoginGate::default())?;
+    write_private(path, auth)?;
+    Ok(())
+}
+
 async fn connect(
     owner: &str,
     auth_state: &AuthState,
     updates: &watch::Sender<GenerateQrcodeResponse>,
+    cancel: &CancellationToken,
     force_qr: bool,
     activity: &progress::Activity<'_>,
 ) -> Result<()> {
     let root = root();
     let path = root.join("auth.json");
     let saved = if path.try_exists().map_err(|_| Error::File)? {
-        Some(Auth::read(&path)?)
+        match Auth::read(&path) {
+            Ok(auth) => Some(auth),
+            Err(Error::InvalidData | Error::LoginExpired) if force_qr => None,
+            Err(error) => return Err(error),
+        }
     } else {
         None
     };
@@ -211,29 +302,22 @@ async fn connect(
         saved.as_ref().map(|auth| auth.identity.as_str()),
         store::bound_identity(&auth_state.db).await.map_err(|_| Error::File)?,
     )?;
-    let browser = VersionedConfig::get().read().douyin.browser.clone();
-    // Explicit QR login must not reuse or erase the working browser session before a successful scan.
-    let fresh_profile = if force_qr {
-        private_dir(&root)?;
-        Some(tempfile::tempdir_in(&root).map_err(Error::from)?)
-    } else {
-        None
-    };
-    let browser_root = fresh_profile.as_ref().map_or(root.as_path(), |dir| dir.path());
-    let session = tokio::select! {
-        _ = auth_state.wait_revoked(owner) => return Err(Error::LoginExpired),
-        result = Session::launch(browser_root, Path::new(&browser)) => result?,
-    };
+    let session = Session::new(saved.as_ref().filter(|_| !force_qr))?;
     let (result, platform_result) = tokio::select! {
         _ = auth_state.wait_revoked(owner) => (Err(Error::LoginExpired), false),
+        _ = cancel.cancelled() => (Err(Error::LoginExpired),false),
         result = tokio::time::timeout(Duration::from_secs(300), authenticate(&session, saved.as_ref().filter(|_| !force_qr), expected.as_deref(), updates, activity)) => {
-            match result {
-                Ok(result) => (result, true),
-                Err(_) => (Err(Error::Network), false),
-            }
+            match result {Ok(result)=>(result,true),Err(_)=>(Err(Error::Network),false)}
         }
     };
-    let closed = session.close().await;
+    if platform_result && let Err(error) = &result {
+        record_login_failure(
+            &root.join("login-state.json"),
+            error,
+            VersionedConfig::get().read().douyin.interval,
+            chrono::Utc::now().timestamp(),
+        )?;
+    }
     if platform_result
         && let (Some(identity), Err(error)) = (&expected, &result)
         && let Some(outcome) = platform_outcome(error, force_qr)
@@ -246,37 +330,8 @@ async fn connect(
             .await
             .map_err(|_| Error::File)?;
     }
-    let mut auth = result?;
-    closed?;
-    if force_qr {
-        activity.stage("restoring", None, None);
-        info!("[抖音] 扫码身份已确认，正在更新持久会话");
-        let session = tokio::select! {
-            _ = auth_state.wait_revoked(owner) => return Err(Error::LoginExpired),
-            result = Session::launch(&root, Path::new(&browser)) => result?,
-        };
-        let restored = tokio::select! {
-            _ = auth_state.wait_revoked(owner) => Err(Error::LoginExpired),
-            result = session.restore(&auth, true) => result,
-        };
-        let closed = session.close().await;
-        auth = restored?;
-        closed?;
-    }
-    if auth_state
-        .valid_hash(owner)
-        .await
-        .map_err(|_| Error::LoginExpired)?
-        .is_none()
-    {
-        return Err(Error::LoginExpired);
-    }
-    store::ensure_account(&auth_state.db, &auth.identity)
-        .await
-        .map_err(binding_error)?;
-    tokio::task::spawn_blocking(move || write_private(&path, &auth))
-        .await
-        .map_err(|_| Error::File)??;
+    let auth = result?;
+    persist_verified(owner, auth_state, cancel, &path, &auth).await?;
     info!("[抖音] 同一账号验证通过，凭据已安全保存");
     Ok(())
 }
@@ -312,9 +367,8 @@ async fn authenticate(
     if let Some(saved) = saved {
         activity.stage("restoring", None, None);
         info!("[抖音] 正在恢复旧会话");
-        match session.restore(saved, false).await {
+        match session.restore(saved).await {
             Ok(auth) => return Ok(auth),
-            Err(Error::LoginExpired | Error::IdentityUnverified) => {}
             Err(error) => return Err(error),
         }
     }
@@ -328,7 +382,7 @@ async fn authenticate(
         tokio::select! {
             result = &mut login => return result,
             result = image_rx.changed() => {
-                result.map_err(|_| Error::Browser)?;
+                result.map_err(|_| Error::Network)?;
                 let image = image_rx.borrow().clone();
                 if image.is_some() && !ready_logged {
                     ready_logged = true;
@@ -336,7 +390,8 @@ async fn authenticate(
                     info!("[抖音] 二维码已就绪，请扫码并在手机上确认登录");
                 }
                 updates.send_modify(|state| {
-                    state.image = image;
+                    state.url = image.unwrap_or_default();
+                    state.image = None;
                     state.message = Some("请使用抖音 App 扫码并在手机上确认登录");
                 });
             }
@@ -347,6 +402,57 @@ async fn authenticate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn login_rejection_cooldown_survives_without_a_bound_account() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("login-state.json");
+        assert!(login_gate(&path, 100).is_ok());
+        record_login_failure(&path, &Error::Network, 1800, 100).unwrap();
+        assert!(!path.exists());
+        for _ in 0..4 {
+            record_login_failure(&path, &Error::Rejected, 1800, 100).unwrap();
+        }
+        assert_eq!(read_gate(&path).unwrap().rejections, 3);
+        assert_eq!(login_gate(&path, 1899), Err(Error::Paused));
+        assert!(login_gate(&path, 1900).is_ok());
+        record_login_failure(&path, &Error::Challenge, 1800, 1900).unwrap();
+        assert_eq!(login_gate(&path, 1901), Err(Error::Paused));
+    }
+
+    #[tokio::test]
+    async fn revoked_or_cancelled_login_preserves_existing_credentials() {
+        use bili_sync_migration::{Migrator, MigratorTrait};
+        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let state = AuthState::new(db, "http://127.0.0.1:24191", dir.path().join("setup.secret"), true)
+            .await
+            .unwrap();
+        let path = dir.path().join("auth.json");
+        write_private(&path, &serde_json::json!({"old":"credential"})).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let candidate = Auth {
+            identity: "fixture".into(),
+            ua: "synthetic".into(),
+            origin: "https://www.douyin.com".into(),
+            cookies: vec![],
+            ms_token: String::new(),
+            fingerprint: String::new(),
+        };
+        let cancel = CancellationToken::new();
+        assert_eq!(
+            persist_verified("revoked", &state, &cancel, &path, &candidate).await,
+            Err(Error::LoginExpired)
+        );
+        cancel.cancel();
+        assert_eq!(
+            persist_verified("revoked", &state, &cancel, &path, &candidate).await,
+            Err(Error::LoginExpired)
+        );
+        assert_eq!(std::fs::read(path).unwrap(), before);
+        assert!(store::bound_identity(&state.db).await.unwrap().is_none());
+    }
 
     #[tokio::test]
     async fn login_waits_for_running_task_and_cancels_when_admin_session_expires() {
@@ -411,6 +517,7 @@ mod tests {
             owner: "admin-session-a".into(),
             force_qr: true,
             state,
+            cancel: CancellationToken::new(),
         };
         assert!(job.status("admin-session-a", "fixture-key").is_ok());
         assert!(matches!(
@@ -460,7 +567,7 @@ mod tests {
             platform_outcome(&Error::AccountChanged, false),
             Some(AccountOutcome::AccountChanged)
         ));
-        for error in [Error::Network, Error::Browser, Error::File, Error::TokenUnavailable] {
+        for error in [Error::Network, Error::File, Error::TokenUnavailable] {
             assert!(platform_outcome(&error, false).is_none());
         }
         assert!(platform_outcome(&Error::LoginExpired, true).is_none());

@@ -92,7 +92,7 @@
 		try {
 			const response = await api.generateQrcode(platform, platform !== 'bilibili');
 			if (request !== generation) {
-				if (destroyed && platform === 'xiaohongshu')
+				if (destroyed && platform !== 'bilibili')
 					void api.cancelQrcode(response.data.qrcode_key, platform).catch(() => {});
 				return;
 			}
@@ -218,7 +218,7 @@
 
 	onDestroy(() => {
 		destroyed = true;
-		if (platform === 'xiaohongshu' && qrcodeKey && !loginCompleted)
+		if (platform !== 'bilibili' && qrcodeKey && !loginCompleted)
 			void api.cancelQrcode(qrcodeKey, platform).catch(() => {});
 		generation++;
 		stopPolling();

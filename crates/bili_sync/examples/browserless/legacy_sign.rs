@@ -193,7 +193,8 @@ mod tests {
 
     #[test]
     fn matches_fixed_python_vectors() {
-        let fixtures: serde_json::Value = serde_json::from_str(include_str!("fixtures/sign.json")).unwrap();
+        let fixtures: serde_json::Value =
+            serde_json::from_str(include_str!("../../src/douyin/fixtures/sign.json")).unwrap();
         for case in fixtures["vectors"].as_array().unwrap() {
             let random = std::array::from_fn(|i| case["random"][i].as_u64().unwrap() as u16);
             let actual = sign_with_inputs(

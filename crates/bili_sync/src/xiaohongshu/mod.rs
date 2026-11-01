@@ -1,7 +1,6 @@
 pub mod client;
-#[path = "../utils/rc4.rs"]
-mod codec;
-mod cookies;
+use crate::utils::cookies;
+use crate::utils::rc4 as codec;
 mod sign;
 mod state;
 pub use crate::douyin::{Error, Result, valid_id};

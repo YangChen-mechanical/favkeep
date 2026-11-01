@@ -1,13 +1,9 @@
 // The gate executes the application's HTTP client; no duplicated login or collection protocol.
-#[path = "../../src/douyin/core.rs"]
-#[allow(dead_code)]
-mod core;
-pub use core::{Error, Result, valid_id};
+pub use super::douyin_app::{Error, Result, valid_id};
 #[path = "../../src/xiaohongshu/client.rs"]
 mod client;
 use super::codec;
-#[path = "../../src/xiaohongshu/cookies.rs"]
-mod cookies;
+use super::douyin_app::cookies;
 #[path = "../../src/xiaohongshu/sign.rs"]
 mod sign;
 #[path = "../../src/xiaohongshu/state.rs"]

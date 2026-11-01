@@ -79,11 +79,12 @@ pub async fn poll_qrcode(
             )?));
         }
         LoginPlatform::Douyin => {
-            return Ok(ApiResponse::ok(serde_json::to_value(
-                douyin::login::poll(&identity.0, &params.qrcode_key)
-                    .await
-                    .map_err(douyin_error)?,
-            )?));
+            let result = if params.cancel {
+                douyin::login::cancel(&identity.0, &params.qrcode_key).await
+            } else {
+                douyin::login::poll(&identity.0, &params.qrcode_key).await
+            };
+            return Ok(ApiResponse::ok(serde_json::to_value(result.map_err(douyin_error)?)?));
         }
         LoginPlatform::Bilibili => {}
     }

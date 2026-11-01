@@ -6,8 +6,8 @@ use super::{
 };
 use crate::{
     config::Config,
-    douyin::browser::{private_dir, write_private},
     media_file,
+    utils::private::{private_dir, write_private},
 };
 use sea_orm::DatabaseConnection;
 use std::path::Path;

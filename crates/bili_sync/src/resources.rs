@@ -2,7 +2,6 @@ use std::sync::LazyLock;
 use tokio::sync::{Semaphore, SemaphorePermit};
 
 pub static TRANSFERS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(2));
-pub static BROWSERS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(1));
 pub static MEDIA_PROCESSES: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(1));
 
 pub async fn acquire(resource: &'static Semaphore, name: &str) -> SemaphorePermit<'static> {

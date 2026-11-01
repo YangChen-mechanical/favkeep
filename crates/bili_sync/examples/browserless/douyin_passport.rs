@@ -76,7 +76,7 @@ fn valid_id(value: &str) -> bool {
 
 fn report(now: i64, uuid: &str, collect_time: f64, nonce: u8) -> Result<String> {
     // The vendored public device profile contains no account, Cookie, or minted token.
-    let mut profile: Value = serde_json::from_str(include_str!("mstoken-profile.json"))?;
+    let mut profile: Value = serde_json::from_str(include_str!("../../src/douyin/native/mstoken-profile.json"))?;
     let n = &mut profile["nWID"];
     n["navigator"]["userAgent"] = json!(sign::UA);
     n["audio"]["audioContext"]["state"] = json!("running");
