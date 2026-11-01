@@ -10,7 +10,11 @@ use crate::{
     config::{CONFIG_DIR, VersionedConfig},
     douyin::browser::{private_dir, write_private},
 };
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::sync::{Mutex, watch};
 use tokio_util::sync::CancellationToken;
 static JOB: Mutex<Option<LoginJob>> = Mutex::const_new(None);
@@ -93,6 +97,7 @@ pub async fn generate(owner: String, auth_state: Arc<AuthState>) -> Result<Gener
             s.status = Some(status);
             s.message = Some(message);
             s.image = None;
+            s.url.clear();
         });
     });
     Ok(response)
@@ -107,6 +112,7 @@ pub async fn cancel(owner: &str, key: &str) -> Result<GenerateQrcodeResponse> {
     job.cancel.cancel();
     state.status = Some("cancelled");
     state.image = None;
+    state.url.clear();
     Ok(state)
 }
 fn expected_identity(saved: Option<&str>, bound: Option<String>) -> Result<Option<String>> {
@@ -139,24 +145,21 @@ async fn connect(
             .map_err(|_| Error::File)?
             .and_then(|a| a.identity),
     )?;
-    let browser = VersionedConfig::get().read().xiaohongshu.browser.clone();
-    let temp = tempfile::tempdir_in(&root).map_err(Error::from)?;
     activity.stage("qr_preparing", None, None);
-    let session = tokio::select! {_=cancel.cancelled()=>return Err(Error::LoginExpired),_=state.wait_revoked(owner)=>return Err(Error::LoginExpired),r=client::launch(temp.path(),std::path::Path::new(&browser))=>r?};
+    let session = client::Session::new(None)?;
     let (result, platform) = {
-        let (image_tx, mut image_rx) = watch::channel(None);
-        let authentication = client::authenticate(&session, saved.as_ref(), expected.as_deref(), Some(&image_tx));
+        let (qr_tx, mut qr_rx) = watch::channel(None);
+        let authentication = client::authenticate(&session, saved.as_ref(), expected.as_deref(), Some(&qr_tx));
         tokio::pin!(authentication);
         loop {
             tokio::select! {
              _=cancel.cancelled()=>break (Err(Error::LoginExpired),false),
              _=state.wait_revoked(owner)=>break (Err(Error::LoginExpired),false),
              result=&mut authentication=>break (result,true),
-             changed=image_rx.changed()=>{if changed.is_err(){break (Err(Error::Browser),false)}let image=image_rx.borrow().clone();updates.send_modify(|s|{s.image=image;s.message=Some("请用小红书手机应用扫描二维码并确认");});activity.stage("qr_waiting",None,None);}
+             changed=qr_rx.changed()=>{if changed.is_err(){break (Err(Error::Network),false)}let url=qr_rx.borrow().clone().unwrap_or_default();updates.send_modify(|s|{s.url=url;s.image=None;s.message=Some("请用小红书手机应用扫描二维码并确认");});activity.stage("qr_waiting",None,None);}
             }
         }
     };
-    let closed = session.close().await;
     if platform && let Err(error) = &result {
         let outcome = match error {
             Error::Rejected => Some(AccountOutcome::Rejected),
@@ -172,42 +175,97 @@ async fn connect(
         }
     }
     let candidate = result?;
-    closed?;
     if cancel.is_cancelled() {
         return Err(Error::LoginExpired);
     }
     activity.stage("restoring", None, None);
-    let session = tokio::select! {_=cancel.cancelled()=>return Err(Error::LoginExpired),_=state.wait_revoked(owner)=>return Err(Error::LoginExpired),r=client::launch(&root,std::path::Path::new(&browser))=>r?};
-    let backup = match client::replace_cookies(&session, &candidate).await {
-        Ok(b) => b,
-        Err(e) => {
-            let _ = session.close().await;
-            return Err(e);
-        }
-    };
+    let session = client::Session::new(Some(&candidate))?;
     let result=async {
   let fresh=tokio::select!{_=cancel.cancelled()=>return Err(Error::LoginExpired),_=state.wait_revoked(owner)=>return Err(Error::LoginExpired),r=tokio::time::timeout(Duration::from_secs(120),client::authenticate(&session,Some(&candidate),expected.as_deref(),None))=>r.map_err(|_|Error::Network)??};
-  if cancel.is_cancelled()||state.valid_hash(owner).await.map_err(|_|Error::LoginExpired)?.is_none(){return Err(Error::LoginExpired)}
-  store::bind(&state.db,&fresh.identity).await.map_err(|e|match e{sea_orm::DbErr::Custom(c) if c=="xiaohongshu_account_changed"=>Error::AccountChanged,_=>Error::File})?;
-  write_private(&path,&fresh)?;
-  store::resume_account(&state.db,&fresh.identity).await.map_err(|_|Error::File)?;
-  Ok(())
+  persist_verified(owner,state,cancel,&path,&fresh).await
  }.await;
-    if result.is_err() {
-        let _ = client::reset_cookies(&session, backup).await;
-    }
-    let closed = session.close().await;
     if let Err(error @ (Error::Rejected | Error::Challenge | Error::IdentityUnverified)) = &result {
         let interval = VersionedConfig::get().read().xiaohongshu.interval;
         store::account_outcome(&state.db, super::runtime::account_result(&Err(error.clone())), interval)
             .await
             .map_err(|_| Error::File)?;
     }
-    result.and(closed)
+    result
+}
+
+async fn commit_owner(owner: &str, state: &AuthState, cancel: &CancellationToken) -> Result<()> {
+    let valid = state
+        .valid_hash(owner)
+        .await
+        .map_err(|_| Error::LoginExpired)?
+        .is_some();
+    if !valid || cancel.is_cancelled() {
+        Err(Error::LoginExpired)
+    } else {
+        Ok(())
+    }
+}
+
+async fn persist_verified(
+    owner: &str,
+    state: &AuthState,
+    cancel: &CancellationToken,
+    path: &Path,
+    fresh: &Auth,
+) -> Result<()> {
+    commit_owner(owner, state, cancel).await?;
+    store::bind(&state.db, &fresh.identity).await.map_err(|e| match e {
+        sea_orm::DbErr::Custom(c) if c == "xiaohongshu_account_changed" => Error::AccountChanged,
+        _ => Error::File,
+    })?;
+    commit_owner(owner, state, cancel).await?;
+    write_private(path, fresh)?;
+    store::resume_account(&state.db, &fresh.identity)
+        .await
+        .map_err(|_| Error::File)?;
+    Ok(())
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn cancelled_or_expired_login_never_replaces_the_old_credential_file() {
+        use bili_sync_migration::{Migrator, MigratorTrait};
+        use sea_orm::ConnectionTrait;
+        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let state = AuthState::new(
+            db.clone(),
+            "http://127.0.0.1:24191",
+            dir.path().join("setup.secret"),
+            true,
+        )
+        .await
+        .unwrap();
+        db.execute_unprepared("INSERT INTO app_identity(id,username,password_hash,auth_version,updated_at) VALUES(1,'test','unused',1,0);INSERT INTO app_session(session_hash,data,auth_version,created_at,last_seen_at,expires_at) VALUES('owner','{}',1,CAST(strftime('%s','now') AS INTEGER),0,CAST(strftime('%s','now') AS INTEGER)+60);").await.unwrap();
+        store::ensure(&db).await.unwrap();
+        let path = dir.path().join("auth.json");
+        std::fs::write(&path, b"previous credentials").unwrap();
+        let candidate = Auth {
+            identity: "new-account".into(),
+            origin: "https://www.rednote.com".into(),
+            ua: "fixture".into(),
+            cookies: vec![],
+        };
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        assert!(matches!(
+            persist_verified("owner", &state, &cancel, &path, &candidate).await,
+            Err(Error::LoginExpired)
+        ));
+        assert!(matches!(
+            persist_verified("expired-owner", &state, &CancellationToken::new(), &path, &candidate).await,
+            Err(Error::LoginExpired)
+        ));
+        assert_eq!(std::fs::read(path).unwrap(), b"previous credentials");
+        assert!(store::account(&db).await.unwrap().unwrap().identity.is_none());
+    }
     #[test]
     fn owner_key_and_bound_identity_are_required() {
         let (_tx, rx) = watch::channel(GenerateQrcodeResponse {

@@ -45,7 +45,7 @@ impl Error {
             Self::DiskFull => "磁盘空间不足，已暂停，请释放空间后恢复",
             Self::Rejected => "平台拒绝请求，进入冷却；连续三次拒绝后暂停",
             Self::LoginExpired => "二维码或登录会话已过期／取消，请重新登录",
-            Self::Challenge => "平台要求浏览器验证，已暂停，请在服务器本机处理",
+            Self::Challenge => "平台要求安全验证，已暂停，请按平台提示处理后重试",
             Self::IdentityUnverified => "未验证官方当前账号，未保存凭据",
             Self::AccountChanged => "与已绑定账号不符，未保存新账号",
             Self::InvalidData => "平台数据无效，本夹未提交",

@@ -1,22 +1,21 @@
 //! Isolated browser-free login/restore protocol gate; never opens an application database or imports browser sessions.
-#[path = "browserless/codec.rs"]
+#[path = "../src/utils/rc4.rs"]
 mod codec;
 #[path = "browserless/douyin_passport.rs"]
 mod douyin_passport;
 #[path = "../src/douyin/sign.rs"]
 mod douyin_sign;
+#[path = "browserless/media.rs"]
+mod media;
 #[path = "browserless/passport_sign.rs"]
 mod passport_sign;
+#[path = "browserless/private.rs"]
+mod private;
 #[path = "browserless/xhs.rs"]
 mod xhs;
-#[path = "browserless/xhs_media.rs"]
-mod xhs_media;
-#[path = "browserless/xhs_sign.rs"]
-mod xhs_sign;
+use private::{private_dir, write};
 
 use anyhow::{Context, Result, bail, ensure};
-#[cfg(windows)]
-use base64::Engine;
 use clap::{Parser, ValueEnum};
 use reqwest::{Client, Url, cookie::Jar, header, redirect::Policy};
 use serde_json::{Value, json};
@@ -130,60 +129,6 @@ fn verify_fp() -> String {
         &random[17..20],
         &random[20..]
     )
-}
-
-fn private_dir(path: &Path) -> Result<()> {
-    ensure!(path.is_absolute(), "output directory must be absolute");
-    // create_dir prevents using an existing application, probe, symlink or credential directory.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .create(path)
-            .context("new private output directory required")?;
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        std::fs::create_dir(path).context("new private output directory required")?;
-        let account = format!(
-            "{}\\{}:(OI)(CI)F",
-            std::env::var("USERDOMAIN")?,
-            std::env::var("USERNAME")?
-        );
-        let status = std::process::Command::new("icacls")
-            .arg(path)
-            .args(["/inheritance:r", "/grant:r", &account])
-            .creation_flags(0x08000000)
-            .output()?;
-        ensure!(status.status.success(), "private ACL setup failed");
-        let check = "$ErrorActionPreference='Stop'; $a=[System.IO.Directory]::GetAccessControl($env:FAVKEEP_PRIVATE_DIR); $me=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; if(!$a.AreAccessRulesProtected){exit 1}; foreach($r in $a.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])){if($r.AccessControlType -eq 'Allow' -and $r.IdentityReference.Value -notin @($me,'S-1-5-18','S-1-5-32-544')){exit 1}}";
-        let encoded = base64::engine::general_purpose::STANDARD
-            .encode(check.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>());
-        let result = std::process::Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded])
-            .env("FAVKEEP_PRIVATE_DIR", path)
-            .creation_flags(0x08000000)
-            .output()?;
-        ensure!(result.status.success(), "private ACL verification failed");
-    }
-    Ok(())
-}
-
-fn write(path: &Path, bytes: &[u8]) -> Result<()> {
-    use std::io::Write;
-    let mut options = std::fs::OpenOptions::new();
-    options.create_new(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    Ok(())
 }
 
 fn classification(status: u16, body: &[u8], json: Option<&Value>) -> &'static str {
@@ -416,60 +361,7 @@ async fn run(args: &Args) -> Result<()> {
                 &serde_json::to_vec_pretty(data)?,
             )?;
         }
-        Platform::Xiaohongshu => {
-            if let Some(source) = &args.restore_auth {
-                let mut session = xhs::Session::restore(client, jar, args.output_dir.clone(), source).await?;
-                if args.scan {
-                    session.scan().await?;
-                }
-                if args.download_three {
-                    xhs_media::download(&session, args.sample_ids_file.as_deref(), &args.ffprobe).await?;
-                }
-                return Ok(());
-            }
-            request(
-                &client,
-                platform,
-                client.get("https://www.rednote.com/"),
-                "bootstrap",
-                &args.output_dir,
-            )
-            .await?;
-            let timestamp = chrono::Utc::now().timestamp_millis() as u64;
-            let random = format!("{:032x}", rand::random::<u128>());
-            let prefix = format!("{timestamp:x}{}50000", &random[..30]);
-            let full = format!("{prefix}{}", xhs_sign::crc32(prefix.as_bytes()));
-            let a1 = &full[..52];
-            let mut session = xhs::Session::new(client, jar, a1.into(), args.output_dir.clone());
-            session.guest();
-            let value = session
-                .api("/api/sns/web/v1/login/qrcode/create", Some("{}"), "qrcode")
-                .await?;
-            let data = &value["data"];
-            ensure!(
-                data["qr_id"].as_str().is_some_and(|s| !s.is_empty())
-                    && data["code"].as_str().is_some_and(|s| !s.is_empty()),
-                "QR identity missing"
-            );
-            let url = Url::parse(data["url"].as_str().context("QR URL missing")?)?;
-            ensure!(
-                url.scheme() == "xhsdiscover" || trusted(platform, &url),
-                "untrusted QR target"
-            );
-            write(
-                &args.output_dir.join("qr-private.json"),
-                &serde_json::to_vec_pretty(data)?,
-            )?;
-            if args.login {
-                session.login(data).await?;
-                if args.scan {
-                    session.scan().await?;
-                }
-                if args.download_three {
-                    xhs_media::download(&session, args.sample_ids_file.as_deref(), &args.ffprobe).await?;
-                }
-            }
-        }
+        Platform::Xiaohongshu => xhs::run(args).await?,
     }
     Ok(())
 }

@@ -123,7 +123,6 @@ impl Config {
     pub fn check(&self) -> Result<()> {
         if !(61..=31_536_000).contains(&self.xiaohongshu.interval)
             || !PathBuf::from(&self.xiaohongshu.path).is_absolute()
-            || !PathBuf::from(&self.xiaohongshu.browser).is_absolute()
         {
             bail!("小红书间隔或路径配置无效");
         }
@@ -259,6 +258,8 @@ mod tests {
         assert!(PathBuf::from(&config.xiaohongshu.path).is_absolute());
         assert!(PathBuf::from(&config.douyin.browser).is_absolute());
         assert!(PathBuf::from(&config.douyin.path).is_absolute());
+        assert!(config.check().is_ok());
+        config.xiaohongshu.browser = "ignored legacy setting".into();
         assert!(config.check().is_ok());
         config.douyin.interval = 0;
         assert!(config.check().is_err());

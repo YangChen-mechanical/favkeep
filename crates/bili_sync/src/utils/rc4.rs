@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Standard RC4, shared only by the isolated protocol probes.
+// Standard RC4 used by platform request encodings.
 pub fn rc4(bytes: &[u8], key: &[u8]) -> Vec<u8> {
     assert!(!key.is_empty());
     let mut state = std::array::from_fn::<_, 256, _>(|i| i as u8);

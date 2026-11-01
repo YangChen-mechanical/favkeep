@@ -23,27 +23,16 @@ pub fn next_run() -> Option<String> {
         .filter(|t| t.timestamp() > 0)
         .map(|t| t.to_rfc3339())
 }
-pub async fn restore(config: &Config, identity: &str) -> Result<(Session, Auth)> {
+pub async fn restore(identity: &str) -> Result<(Session, Auth)> {
     let root = super::login::root();
     let saved = Auth::read(&root.join("auth.json"))?;
     if saved.identity != identity {
         return Err(Error::AccountChanged);
     }
-    let session = client::launch(&root, Path::new(&config.xiaohongshu.browser)).await?;
-    let result = client::authenticate(&session, Some(&saved), Some(identity), None).await;
-    match result {
-        Ok(auth) => {
-            if let Err(e) = write_private(&root.join("auth.json"), &auth) {
-                let _ = session.close().await;
-                return Err(e);
-            }
-            Ok((session, auth))
-        }
-        Err(e) => {
-            let _ = session.close().await;
-            Err(e)
-        }
-    }
+    let session = Session::new(Some(&saved))?;
+    let auth = client::authenticate(&session, Some(&saved), Some(identity), None).await?;
+    write_private(&root.join("auth.json"), &auth)?;
+    Ok((session, auth))
 }
 pub async fn run(db: &DatabaseConnection, config: &Config) -> Result<()> {
     let Ok(_guard) = RUNNING.try_lock() else {
@@ -66,13 +55,14 @@ pub async fn run(db: &DatabaseConnection, config: &Config) -> Result<()> {
     let mut activity = progress::start("sync");
     let result = async {
         activity.stage("restoring", None, None);
-        let (session, auth) = restore(config, &identity).await?;
-        let work = async {
+        let (session, auth) = restore(&identity).await?;
+        async {
             activity.stage("scanning", None, None);
             let items = tokio::time::timeout(Duration::from_secs(900), client::scan(&session, &auth))
                 .await
                 .map_err(|_| Error::Incomplete)??;
             let fresh = client::authenticate(&session, Some(&auth), Some(&identity), None).await?;
+            write_private(&super::login::root().join("auth.json"), &fresh)?;
             let scan = store::commit_scan(db, &identity, source.revision, &items)
                 .await
                 .map_err(|e| match e {
@@ -139,9 +129,7 @@ pub async fn run(db: &DatabaseConnection, config: &Config) -> Result<()> {
             }
             failure.map_or(Ok(()), Err)
         }
-        .await;
-        let closed = session.close().await;
-        work.and(closed)
+        .await
     }
     .await;
     if let Ok(pending) = store::pending(db, &identity).await {
@@ -165,8 +153,7 @@ pub async fn resume(db: &DatabaseConnection, config: &Config) -> Result<()> {
     let identity = a.identity.ok_or(Error::LoginExpired)?;
     let mut activity = progress::start("resume");
     let result = async {
-        let (session, _) = restore(config, &identity).await?;
-        session.close().await?;
+        let _verified = restore(&identity).await?;
         if !store::resume_account(db, &identity).await.map_err(database)? {
             return Err(Error::Paused);
         }
@@ -244,7 +231,8 @@ async fn save(
                 Err(error @ (Error::Rejected | Error::LoginExpired | Error::Challenge)) => return Err(error),
                 Err(error) => {
                     // A missing detail can mean a removed note or an expired account; confirm self before retrying it.
-                    client::authenticate(session, Some(auth), Some(identity), None).await?;
+                    let fresh = client::authenticate(session, Some(auth), Some(identity), None).await?;
+                    write_private(&super::login::root().join("auth.json"), &fresh)?;
                     return Err(error);
                 }
             };

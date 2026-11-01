@@ -26,6 +26,7 @@ chrono = { workspace = true }
 chromiumoxide = { workspace = true }
 clap = { workspace = true }
 cookie = { workspace = true }
+cookie_store = { workspace = true }
 croner = { workspace = true }
 dashmap = { workspace = true }
 dirs = { workspace = true }

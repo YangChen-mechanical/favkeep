@@ -1,26 +1,14 @@
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
-use std::time::Duration;
-
-use base64::Engine;
-use chromiumoxide::Page;
-use chromiumoxide::cdp::browser_protocol::{
-    emulation::{SetLocaleOverrideParams, SetUserAgentOverrideParams},
-    input::{DispatchMouseEventParams, DispatchMouseEventType},
-    network::{
-        BlockPattern, CookieParam, DeleteCookiesParams, EnableParams, EventLoadingFailed, EventLoadingFinished,
-        EventRequestWillBeSent, EventResponseReceived, EventResponseReceivedExtraInfo, GetCookiesParams,
-        GetResponseBodyParams, RequestId, SetBlockedUrLsParams, SetCookiesParams,
-    },
-    page::CaptureScreenshotFormat,
-};
-use futures::StreamExt;
-use reqwest::Url;
+use super::{Error, Result, cookies::Jar, sign, state::initial_state, valid_id};
+use reqwest::{Client, Url, header, redirect::Policy};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-use super::{Error, Result, valid_id};
-pub use crate::douyin::browser::Session;
+use std::collections::HashSet;
+use std::path::Path;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
+};
+use std::time::Duration;
 
 const WEB_HOSTS: [&str; 2] = ["www.xiaohongshu.com", "www.rednote.com"];
 const API_HOSTS: [&str; 4] = [
@@ -29,6 +17,9 @@ const API_HOSTS: [&str; 4] = [
     "www.rednote.com",
     "webapi.rednote.com",
 ];
+const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0";
+const ME: &str = "/api/sns/web/v2/user/me";
+const MAX_BODY: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Auth {
@@ -40,55 +31,397 @@ pub struct Auth {
 
 impl Auth {
     pub fn read(path: &Path) -> Result<Self> {
-        if std::fs::metadata(path).map_err(|_| Error::File)?.len() > 1024 * 1024 {
+        if std::fs::metadata(path).map_err(Error::from)?.len() > 1024 * 1024 {
             return Err(Error::InvalidData);
         }
         let auth: Self =
-            serde_json::from_slice(&std::fs::read(path).map_err(|_| Error::File)?).map_err(|_| Error::InvalidData)?;
+            serde_json::from_slice(&std::fs::read(path).map_err(Error::from)?).map_err(|_| Error::InvalidData)?;
         if !valid_id(&auth.identity)
-            || !WEB_HOSTS.iter().any(|host| auth.origin == format!("https://{host}"))
-            || !auth.ua.is_ascii()
+            || auth.identity == "0"
+            || !["https://www.rednote.com", "https://www.xiaohongshu.com"].contains(&auth.origin.as_str())
+            || auth.ua.is_empty()
             || auth.ua.len() > 1024
+            || !auth.ua.bytes().all(|b| (32..127).contains(&b))
         {
             return Err(Error::InvalidData);
         }
-        auth.cookie_params()?;
-        Ok(auth)
-    }
-
-    fn cookie_params(&self) -> Result<Vec<CookieParam>> {
-        let mut cookies = Vec::new();
-        for value in &self.cookies {
-            let domain = value["domain"].as_str().unwrap_or("").trim_start_matches('.');
-            if !["xiaohongshu.com", "rednote.com"]
-                .iter()
-                .any(|base| domain == *base || domain.ends_with(&format!(".{base}")))
-            {
-                continue;
-            }
-            let mut value = value.clone();
-            let object = value.as_object_mut().ok_or(Error::InvalidData)?;
-            if object.get("expires").and_then(Value::as_f64).is_some_and(|n| n <= 0.0) {
-                object.remove("expires");
-            }
-            let cookie: CookieParam = serde_json::from_value(value).map_err(|_| Error::InvalidData)?;
-            if cookie.name.is_empty()
-                || !cookie
-                    .name
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
-                || !cookie.value.is_ascii()
-                || cookie.value.bytes().any(|b| b < 32 || b == 127 || b == b';')
-            {
-                return Err(Error::InvalidData);
-            }
-            cookies.push(cookie);
-        }
-        if !cookies.iter().any(|c| c.name == "web_session" && !c.value.is_empty()) {
+        let jar = Jar::default();
+        jar.load(&auth.cookies)?;
+        if jar
+            .value(
+                "web_session",
+                &Url::parse(api_origin(&auth.origin)).map_err(|_| Error::InvalidData)?,
+            )?
+            .is_none_or(|value| value.is_empty())
+        {
             return Err(Error::LoginExpired);
         }
-        Ok(cookies)
+        Ok(auth)
     }
+}
+
+fn api_origin(origin: &str) -> &'static str {
+    if origin == "https://www.xiaohongshu.com" {
+        "https://edith.xiaohongshu.com"
+    } else {
+        "https://webapi.rednote.com"
+    }
+}
+
+pub struct Session {
+    client: Client,
+    jar: Arc<Jar>,
+    origin: String,
+    api: &'static str,
+    ua: String,
+    page_load: u64,
+    sequence: AtomicU32,
+}
+
+impl Session {
+    pub fn new(saved: Option<&Auth>) -> Result<Self> {
+        let origin = saved.map(|a| a.origin.as_str()).unwrap_or("https://www.rednote.com");
+        if !["https://www.rednote.com", "https://www.xiaohongshu.com"].contains(&origin) {
+            return Err(Error::InvalidData);
+        }
+        let ua = saved.map(|a| a.ua.as_str()).unwrap_or(UA);
+        if ua.is_empty() || ua.len() > 1024 || !ua.bytes().all(|b| (32..127).contains(&b)) {
+            return Err(Error::InvalidData);
+        }
+        let jar = Arc::new(Jar::default());
+        if let Some(saved) = saved {
+            jar.load(&saved.cookies)?;
+        }
+        let client = Client::builder()
+            .user_agent(ua)
+            .cookie_provider(jar.clone())
+            .connect_timeout(Duration::from_secs(20))
+            .read_timeout(Duration::from_secs(20))
+            .timeout(Duration::from_secs(45))
+            .redirect(Policy::none())
+            .build()
+            .map_err(|_| Error::Network)?;
+        Ok(Self {
+            client,
+            jar,
+            origin: origin.to_owned(),
+            api: api_origin(origin),
+            ua: ua.to_owned(),
+            page_load: (chrono::Utc::now().timestamp_millis() as u64).saturating_sub(20_000),
+            sequence: AtomicU32::new(17),
+        })
+    }
+
+    async fn bootstrap(&self) -> Result<()> {
+        let client = Client::builder()
+            .user_agent(&self.ua)
+            .cookie_provider(self.jar.clone())
+            .connect_timeout(Duration::from_secs(20))
+            .read_timeout(Duration::from_secs(20))
+            .timeout(Duration::from_secs(45))
+            .redirect(Policy::custom(|a| {
+                if a.previous().len() < 3
+                    && trusted_api(a.url().as_str()).is_ok()
+                    && a.url().host_str().is_some_and(|h| WEB_HOSTS.contains(&h))
+                    && ["/", "/login"].contains(&a.url().path())
+                {
+                    a.follow()
+                } else {
+                    a.stop()
+                }
+            }))
+            .build()
+            .map_err(|_| Error::Network)?;
+        let response = client.get(&self.origin).send().await.map_err(|_| Error::Network)?;
+        let bytes = read_response(response).await?;
+        html_challenge(&bytes)?;
+        let timestamp = chrono::Utc::now().timestamp_millis() as u64;
+        let random = format!("{:032x}", rand::random::<u128>());
+        let prefix = format!("{timestamp:x}{}50000", &random[..30]);
+        let full = format!("{prefix}{}", sign::crc32(prefix.as_bytes()));
+        let a1 = &full[..52];
+        let url = Url::parse(&self.origin).map_err(|_| Error::InvalidData)?;
+        let base = url.host_str().ok_or(Error::InvalidData)?.trim_start_matches("www.");
+        for text in [
+            format!("a1={a1}; Domain=.{base}; Path=/; Secure"),
+            format!("webId={:x}; Domain=.{base}; Path=/; Secure", md5::compute(a1)),
+            format!("webBuild=4.86.0; Domain=.{base}; Path=/; Secure"),
+            format!("xsecappid=xhs-pc-web; Domain=.{base}; Path=/; Secure"),
+        ] {
+            self.jar.set(&text, &url)?;
+        }
+        Ok(())
+    }
+
+    async fn api(&self, path: &str, body: Option<&str>) -> Result<Value> {
+        let url = trusted_api(&format!("{}{path}", self.api))?;
+        if !url.path().starts_with("/api/") {
+            return Err(Error::InvalidData);
+        }
+        let path = &url.as_str()[self.api.len()..];
+        let a1 = self.jar.value("a1", &url)?.ok_or(Error::LoginExpired)?;
+        let timestamp = chrono::Utc::now().timestamp_millis() as u64;
+        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        let xs = sign::sign(
+            path,
+            body,
+            &a1,
+            &sign::Inputs {
+                timestamp,
+                page_load: self.page_load,
+                seed: rand::random(),
+                sequence,
+                window: 1500 + sequence,
+            },
+        )
+        .map_err(|_| Error::InvalidData)?;
+        let common = sign::common(&a1, timestamp, 7).map_err(|_| Error::InvalidData)?;
+        let mut request = self
+            .client
+            .request(
+                if body.is_some() {
+                    reqwest::Method::POST
+                } else {
+                    reqwest::Method::GET
+                },
+                url,
+            )
+            .header(header::ORIGIN, &self.origin)
+            .header(header::REFERER, format!("{}/", self.origin))
+            .header(header::CONTENT_TYPE, "application/json;charset=UTF-8")
+            .header("x-s", xs)
+            .header("x-s-common", common)
+            .header("x-t", timestamp.to_string())
+            .header("x-b3-traceid", format!("{:016x}", rand::random::<u64>()))
+            .header("x-mns", "unload");
+        if let Some(body) = body {
+            request = request.body(body.to_owned());
+        }
+        let bytes = read_response(request.send().await.map_err(|_| Error::Network)?).await?;
+        let value: Value =
+            serde_json::from_slice(&bytes).map_err(|_| html_challenge(&bytes).err().unwrap_or(Error::InvalidData))?;
+        business_status(&value)?;
+        Ok(value)
+    }
+
+    fn export(&self, id: String) -> Result<Auth> {
+        if self
+            .jar
+            .value("web_session", &Url::parse(self.api).map_err(|_| Error::InvalidData)?)?
+            .is_none_or(|value| value.is_empty())
+        {
+            return Err(Error::LoginExpired);
+        }
+        Ok(Auth {
+            identity: id,
+            origin: self.origin.clone(),
+            ua: self.ua.clone(),
+            cookies: self.jar.snapshot(),
+        })
+    }
+}
+
+async fn read_response(mut response: reqwest::Response) -> Result<Vec<u8>> {
+    if let Some(error) = response_error(i64::from(response.status().as_u16())) {
+        return Err(error);
+    }
+    if response.status().as_u16() != 200 {
+        return Err(Error::Network);
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| Error::Network)? {
+        if chunk.len() > MAX_BODY.saturating_sub(bytes.len()) {
+            return Err(Error::InvalidData);
+        }
+        bytes.extend(chunk);
+    }
+    Ok(bytes)
+}
+
+fn business_status(value: &Value) -> Result<()> {
+    if value["success"] == true && value["code"].as_i64() == Some(0) {
+        return Ok(());
+    }
+    if value["code"].as_i64() == Some(-100) {
+        Err(Error::LoginExpired)
+    } else {
+        Err(Error::Rejected)
+    }
+}
+
+fn html_challenge(bytes: &[u8]) -> Result<()> {
+    let raw = String::from_utf8_lossy(bytes);
+    let scripts = regex::Regex::new(r"(?is)<script\b[^>]*>.*?</script>|<style\b[^>]*>.*?</style>")
+        .map_err(|_| Error::InvalidData)?;
+    let clean = scripts.replace_all(&raw, " ");
+    let tags = regex::Regex::new(r"(?s)<[^>]*>").map_err(|_| Error::InvalidData)?;
+    let visible = tags.replace_all(&clean, " ").to_ascii_lowercase();
+    if [
+        "ip at risk",
+        "请完成验证",
+        "安全验证",
+        "安全限制",
+        "访问频繁",
+        "访问异常",
+        "验证后继续",
+    ]
+    .iter()
+    .any(|s| visible.contains(s))
+    {
+        Err(Error::Challenge)
+    } else {
+        Ok(())
+    }
+}
+
+pub async fn authenticate(
+    session: &Session,
+    saved: Option<&Auth>,
+    expected: Option<&str>,
+    qr: Option<&tokio::sync::watch::Sender<Option<String>>>,
+) -> Result<Auth> {
+    let expected = expected.or(saved.map(|a| a.identity.as_str()));
+    if let Some(qr) = qr {
+        session.bootstrap().await?;
+        let value = session.api("/api/sns/web/v1/login/qrcode/create", Some("{}")).await?;
+        let data = &value["data"];
+        let qr_id = data["qr_id"]
+            .as_str()
+            .filter(|v| !v.is_empty() && v.len() <= 1024)
+            .ok_or(Error::InvalidData)?;
+        let code = data["code"]
+            .as_str()
+            .filter(|v| !v.is_empty() && v.len() <= 1024)
+            .ok_or(Error::InvalidData)?;
+        let target = data["url"]
+            .as_str()
+            .filter(|v| v.len() <= 8192)
+            .ok_or(Error::InvalidData)?;
+        let target_url = Url::parse(target).map_err(|_| Error::InvalidData)?;
+        if target_url.scheme() != "xhsdiscover" && trusted_api(target).is_err() {
+            return Err(Error::InvalidData);
+        }
+        qr.send_replace(Some(target.to_owned()));
+        let mut poll = Url::parse(&format!("{}/api/sns/web/v1/login/qrcode/status", session.api))
+            .map_err(|_| Error::InvalidData)?;
+        poll.query_pairs_mut()
+            .append_pair("qr_id", qr_id)
+            .append_pair("code", code);
+        let path = &poll.as_str()[session.api.len()..];
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+        while tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let result = session.api(path, None).await?;
+            match result["data"]["code_status"].as_i64().ok_or(Error::InvalidData)? {
+                0 | 1 => {}
+                2 => {
+                    let info = &result["data"]["login_info"];
+                    if let Some(value) = info["session"].as_str().or_else(|| info["web_session"].as_str()) {
+                        if value.is_empty()
+                            || value.len() > 4096
+                            || !value.bytes().all(|b| b.is_ascii_graphic() && b != b';' && b != b',')
+                        {
+                            return Err(Error::InvalidData);
+                        }
+                        let url = Url::parse(&session.origin).map_err(|_| Error::InvalidData)?;
+                        let base = url.host_str().ok_or(Error::InvalidData)?.trim_start_matches("www.");
+                        session.jar.set(
+                            &format!("web_session={value}; Domain=.{base}; Path=/; Secure; HttpOnly"),
+                            &url,
+                        )?;
+                    }
+                    let me = session.api(ME, None).await?;
+                    let id =
+                        checked_identity(&format!("{}{ME}", session.api), &me, expected, info["user_id"].as_str())?;
+                    return session.export(id);
+                }
+                _ => return Err(Error::LoginExpired),
+            }
+        }
+        return Err(Error::LoginExpired);
+    }
+    let value = session.api(ME, None).await?;
+    let id = checked_identity(&format!("{}{ME}", session.api), &value, expected, None)?;
+    session.export(id)
+}
+
+pub async fn scan(session: &Session, auth: &Auth) -> Result<Vec<Item>> {
+    let mut scan = Scan::default();
+    for _ in 0..20 {
+        let mut url =
+            Url::parse(&format!("{}/api/sns/web/v2/note/collect/page", session.api)).map_err(|_| Error::InvalidData)?;
+        url.query_pairs_mut()
+            .append_pair("num", "30")
+            .append_pair("cursor", &scan.cursor)
+            .append_pair("user_id", &auth.identity)
+            .append_pair("image_formats", "jpg,webp,avif");
+        let value = session.api(&url.as_str()[session.api.len()..], None).await?;
+        let cursor = scan.cursor.clone();
+        scan.accept(&cursor, &value)?;
+        if scan.finish_window(None)? {
+            return Ok(scan.items);
+        }
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+    Err(Error::Incomplete)
+}
+
+pub async fn detail(session: &Session, auth: &Auth, item: &Item) -> Result<Video> {
+    if !valid_id(&item.id)
+        || item.kind != "video"
+        || item.token.is_empty()
+        || item.token.len() > 4096
+        || !item.token.is_ascii()
+    {
+        return Err(Error::InvalidData);
+    }
+    let mut target = Url::parse(&format!("{}/explore/{}", auth.origin, item.id)).map_err(|_| Error::InvalidData)?;
+    target
+        .query_pairs_mut()
+        .append_pair("xsec_token", &item.token)
+        .append_pair("xsec_source", "pc_user");
+    let note_url = target.clone();
+    let client = Client::builder()
+        .user_agent(&session.ua)
+        .cookie_provider(session.jar.clone())
+        .connect_timeout(Duration::from_secs(20))
+        .read_timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(45))
+        .redirect(Policy::custom(move |a| {
+            if a.previous().len() < 3 && navigation_matches(a.url(), &note_url) {
+                a.follow()
+            } else {
+                a.stop()
+            }
+        }))
+        .build()
+        .map_err(|_| Error::Network)?;
+    let bytes = read_response(
+        client
+            .get(target)
+            .header(header::REFERER, format!("{}/", auth.origin))
+            .send()
+            .await
+            .map_err(|_| Error::Network)?,
+    )
+    .await?;
+    html_challenge(&bytes)?;
+    let state = initial_state(std::str::from_utf8(&bytes).map_err(|_| Error::InvalidData)?)
+        .map_err(|_| Error::MediaUnavailable)?;
+    let note = &state["note"]["noteDetailMap"][&item.id]["note"];
+    if note["noteId"] != item.id && note["note_id"] != item.id {
+        return Err(Error::InvalidData);
+    }
+    Ok(Video {
+        url: video_url(note)?,
+        title: note["title"].as_str().unwrap_or("").chars().take(1024).collect(),
+        author: note["user"]["nickname"]
+            .as_str()
+            .unwrap_or("")
+            .chars()
+            .take(256)
+            .collect(),
+    })
 }
 
 fn trusted_api(value: &str) -> Result<Url> {
@@ -96,6 +429,7 @@ fn trusted_api(value: &str) -> Result<Url> {
     if url.scheme() != "https"
         || !url.username().is_empty()
         || url.password().is_some()
+        || url.fragment().is_some()
         || url.port_or_known_default() != Some(443)
         || !url.host_str().is_some_and(|host| API_HOSTS.contains(&host))
     {
@@ -114,46 +448,6 @@ fn navigation_matches(actual: &Url, target: &Url) -> bool {
                 .is_some_and(|id| valid_id(id) && actual.path() == format!("/discovery/item/{id}")))
 }
 
-async fn navigate(page: &Page, target: &str) -> Result<()> {
-    match page.goto(target).await {
-        Ok(_) | Err(chromiumoxide::error::CdpError::Timeout) => {}
-        Err(error) => {
-            let code = match &error {
-                chromiumoxide::error::CdpError::ChromeMessage(message) => message
-                    .split("net::")
-                    .nth(1)
-                    .map(|v| {
-                        v.chars()
-                            .take_while(|c| c.is_ascii_uppercase() || *c == '_')
-                            .collect::<String>()
-                    })
-                    .unwrap_or_else(|| "chrome_message".into()),
-                chromiumoxide::error::CdpError::Chrome(_) => "cdp_protocol".into(),
-                _ => "browser_transport".into(),
-            };
-            eprintln!("navigation_failed: {code}");
-            return Err(Error::Browser);
-        }
-    }
-    // A loaded document can outlive a timed-out asset; identity and pagination still need their own evidence.
-    let actual = page
-        .evaluate("location.href")
-        .await
-        .map_err(|_| Error::Browser)?
-        .into_value::<String>()
-        .map_err(|_| Error::Browser)?;
-    let actual = trusted_api(&actual)?;
-    let target = trusted_api(target)?;
-    if actual.path() == "/website-login/error" {
-        return Err(Error::Rejected);
-    }
-    if !navigation_matches(&actual, &target) {
-        eprintln!("navigation_target_mismatch");
-        return Err(Error::Browser);
-    }
-    Ok(())
-}
-
 fn identity(url: &str, body: &Value) -> Option<String> {
     let url = trusted_api(url).ok()?;
     if !["/api/sns/web/v1/user/self", "/api/sns/web/v2/user/me"].contains(&url.path().trim_end_matches('/'))
@@ -169,208 +463,24 @@ fn identity(url: &str, body: &Value) -> Option<String> {
     (valid_id(id) && id != "0").then(|| id.to_owned())
 }
 
+fn checked_identity(url: &str, body: &Value, expected: Option<&str>, qr_user: Option<&str>) -> Result<String> {
+    if body["data"]["guest"] == true {
+        return Err(Error::LoginExpired);
+    }
+    let id = identity(url, body).ok_or(Error::IdentityUnverified)?;
+    if [expected, qr_user].into_iter().flatten().any(|value| value != id) {
+        return Err(Error::AccountChanged);
+    }
+    Ok(id)
+}
+
 fn response_error(status: i64) -> Option<Error> {
     match status {
         401 => Some(Error::LoginExpired),
-        403 | 406 | 429 | 461 | 471 => Some(Error::Rejected),
+        403 | 406 | 429 => Some(Error::Rejected),
+        461 | 471 => Some(Error::Challenge),
         _ => None,
     }
-}
-
-async fn response_body(page: &Page, event: &EventResponseReceived) -> Result<Value> {
-    if let Some(error) = response_error(event.response.status) {
-        return Err(error);
-    }
-    if event.response.status != 200 {
-        return Err(Error::Network);
-    }
-    for _ in 0..20 {
-        if let Ok(result) = page.execute(GetResponseBodyParams::new(event.request_id.clone())).await {
-            if result.result.body.len() > 12 * 1024 * 1024 {
-                return Err(Error::InvalidData);
-            }
-            let bytes = if result.result.base64_encoded {
-                base64::engine::general_purpose::STANDARD
-                    .decode(result.result.body)
-                    .map_err(|_| Error::InvalidData)?
-            } else {
-                result.result.body.into_bytes()
-            };
-            return serde_json::from_slice(&bytes).map_err(|_| Error::InvalidData);
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    Err(Error::Incomplete)
-}
-
-async fn challenge(page: &Page) -> Result<()> {
-    let blocked = page
-        .evaluate(
-            r#"!!document.body && /请完成验证|安全验证|安全限制|访问频繁|访问异常|验证后继续|IP at risk/.test(document.body.innerText)"#,
-        )
-        .await
-        .map_err(|_| Error::Browser)?
-        .into_value::<bool>()
-        .map_err(|_| Error::Browser)?;
-    if blocked { Err(Error::Challenge) } else { Ok(()) }
-}
-
-const QR: &str = r#"(() => {
-    const visible = e => { const r=e.getBoundingClientRect(); return r.width>0 && r.height>0; };
-    const context = e => {
-        if (e.matches('img[alt*="二维码"]') || e.closest('[class*="qrcode"],[class*="qr-code"]')) return true;
-        let p=e.parentElement;
-        for(let i=0;p && i<4;i++,p=p.parentElement) {
-            const r=p.getBoundingClientRect();
-            if(r.width<650 && r.height<800 && /扫码|二维码|Scan.*log in|QR code/i.test(p.innerText || '')) return true;
-        }
-        return false;
-    };
-    const qr=[...document.querySelectorAll('img,canvas')].find(e=>{
-        const r=e.getBoundingClientRect();
-        return visible(e) && r.width>=100 && r.width<=512 && r.height>=100 && r.height<=512 && r.width/r.height>.8 && r.width/r.height<1.2 && context(e);
-    });
-    if(qr) { qr.setAttribute('data-favkeep-xhs-qr',''); return true; }
-    const button=[...document.querySelectorAll('button,a,div,span')].find(e=>visible(e) && e.childElementCount===0 && ['登录','扫码登录','登录/注册','Log in','Login','Sign in'].includes(e.textContent.trim()) && !e.hasAttribute('data-favkeep-clicked'));
-    if(button) { button.setAttribute('data-favkeep-clicked',''); button.click(); }
-    return false;
-})()"#;
-
-const SELECT_COLLECTION: &str = r#"(() => {
-    const tabs=[...document.querySelectorAll('span,div,button,a')].filter(e=>
-        e.childElementCount===0 && ['收藏','Save','Saved'].includes(e.textContent.trim()) && e.getBoundingClientRect().width>0);
-    if(!tabs.length)return false;
-    tabs[tabs.length-1].click();return true;
-})()"#;
-
-pub async fn authenticate(
-    session: &Session,
-    saved: Option<&Auth>,
-    expected: Option<&str>,
-    qr: Option<&tokio::sync::watch::Sender<Option<String>>>,
-) -> Result<Auth> {
-    let login = qr.is_some();
-    if !login && saved.is_none() {
-        return Err(Error::LoginExpired);
-    }
-    let origin = saved.as_ref().map_or("https://www.rednote.com", |a| a.origin.as_str());
-    if !login && let Some(auth) = &saved {
-        let existing = session
-            .page
-            .execute(
-                GetCookiesParams::builder()
-                    .urls(["https://www.xiaohongshu.com", "https://www.rednote.com"])
-                    .build(),
-            )
-            .await
-            .map_err(|_| Error::Browser)?
-            .result
-            .cookies;
-        if !existing.iter().any(|c| c.name == "web_session" && !c.value.is_empty()) {
-            session
-                .page
-                .execute(SetCookiesParams::new(auth.cookie_params()?))
-                .await
-                .map_err(|_| Error::Browser)?;
-        }
-    }
-    let mut responses = session
-        .page
-        .event_listener::<EventResponseReceived>()
-        .await
-        .map_err(|_| Error::Browser)?;
-    navigate(&session.page, &format!("{origin}/explore")).await?;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(if login { 180 } else { 45 });
-    let mut qr_saved = false;
-    while tokio::time::Instant::now() < deadline {
-        if let Ok(Some(event)) = tokio::time::timeout(Duration::from_millis(500), responses.next()).await
-            && event.r#type != chromiumoxide::cdp::browser_protocol::network::ResourceType::Preflight
-            && let Ok(url) = trusted_api(&event.response.url)
-            && ["/api/sns/web/v1/user/self", "/api/sns/web/v2/user/me"].contains(&url.path().trim_end_matches('/'))
-        {
-            let body = response_body(&session.page, &event).await?;
-            if !login && body["success"] == true && body["code"] == 0 && body["data"]["guest"] == true {
-                return Err(Error::LoginExpired);
-            }
-            if let Some(id) = identity(&event.response.url, &body) {
-                if expected.or(saved.map(|s| s.identity.as_str())).is_some_and(|s| s != id) {
-                    return Err(Error::AccountChanged);
-                }
-                let origin = if url.host_str().is_some_and(|h| h.ends_with("rednote.com")) {
-                    "https://www.rednote.com"
-                } else {
-                    "https://www.xiaohongshu.com"
-                };
-                let ua = session
-                    .page
-                    .evaluate("navigator.userAgent")
-                    .await
-                    .map_err(|_| Error::Browser)?
-                    .into_value::<String>()
-                    .map_err(|_| Error::Browser)?;
-                let cookies = session
-                    .page
-                    .execute(
-                        GetCookiesParams::builder()
-                            .urls([
-                                "https://www.xiaohongshu.com",
-                                "https://edith.xiaohongshu.com",
-                                "https://www.rednote.com",
-                                "https://webapi.rednote.com",
-                            ])
-                            .build(),
-                    )
-                    .await
-                    .map_err(|_| Error::Browser)?
-                    .result
-                    .cookies;
-                let auth = Auth {
-                    identity: id,
-                    origin: origin.into(),
-                    ua,
-                    cookies: cookies
-                        .into_iter()
-                        .map(|c| serde_json::to_value(c).map_err(|_| Error::InvalidData))
-                        .collect::<Result<_>>()?,
-                };
-                auth.cookie_params()?;
-                return Ok(auth);
-            }
-        }
-        challenge(&session.page).await?;
-        if login
-            && !qr_saved
-            && session
-                .page
-                .evaluate(QR)
-                .await
-                .map_err(|_| Error::Browser)?
-                .into_value::<bool>()
-                .map_err(|_| Error::Browser)?
-        {
-            let bytes = session
-                .page
-                .find_element("[data-favkeep-xhs-qr]")
-                .await
-                .map_err(|_| Error::Browser)?
-                .screenshot(CaptureScreenshotFormat::Png)
-                .await
-                .map_err(|_| Error::Browser)?;
-            if bytes.len() > 1024 * 1024 {
-                return Err(Error::InvalidData);
-            }
-            qr.ok_or(Error::InvalidData)?.send_replace(Some(format!(
-                "data:image/png;base64,{}",
-                base64::engine::general_purpose::STANDARD.encode(bytes)
-            )));
-            qr_saved = true;
-        }
-    }
-    Err(if login {
-        Error::LoginExpired
-    } else {
-        Error::IdentityUnverified
-    })
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -378,17 +488,6 @@ pub struct Item {
     pub id: String,
     pub kind: String,
     pub token: String,
-}
-
-fn collection_url(raw: &str) -> Option<Url> {
-    let url = trusted_api(raw).ok()?;
-    [
-        "/api/sns/web/v1/note/collect/page",
-        "/api/sns/web/v2/note/collect/page",
-        "/api/sns/web/v1/user/collect/page",
-    ]
-    .contains(&url.path().trim_end_matches('/'))
-    .then_some(url)
 }
 
 fn page_items(body: &Value) -> Result<(Vec<Item>, bool, String)> {
@@ -489,190 +588,6 @@ impl Scan {
     }
 }
 
-async fn scroll(page: &Page) -> Result<()> {
-    page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight); window.scrollBy(0,-900)")
-        .await
-        .map_err(|_| Error::Browser)?;
-    page.execute(
-        DispatchMouseEventParams::builder()
-            .r#type(DispatchMouseEventType::MouseWheel)
-            .x(640.0)
-            .y(700.0)
-            .delta_x(0.0)
-            .delta_y(1600.0)
-            .build()
-            .map_err(|_| Error::Browser)?,
-    )
-    .await
-    .map_err(|_| Error::Browser)?;
-    Ok(())
-}
-
-pub async fn scan(session: &Session, auth: &Auth) -> Result<Vec<Item>> {
-    let page = &session.page;
-    page.execute(
-        EnableParams::builder()
-            .max_total_buffer_size(64 * 1024 * 1024)
-            .max_resource_buffer_size(8 * 1024 * 1024)
-            .enable_durable_messages(true)
-            .build(),
-    )
-    .await
-    .map_err(|_| Error::Browser)?;
-    page.execute(
-        SetBlockedUrLsParams::builder()
-            .url_patterns(
-                ["jpg", "jpeg", "png", "webp", "mp4", "woff"]
-                    .map(|extension| BlockPattern::new(format!("*://*:*/*.{extension}*"), true)),
-            )
-            .build(),
-    )
-    .await
-    .map_err(|_| Error::Browser)?;
-    let mut responses = page
-        .event_listener::<EventResponseReceived>()
-        .await
-        .map_err(|_| Error::Browser)?;
-    let mut finished = page
-        .event_listener::<EventLoadingFinished>()
-        .await
-        .map_err(|_| Error::Browser)?;
-    let mut failures = page
-        .event_listener::<EventLoadingFailed>()
-        .await
-        .map_err(|_| Error::Browser)?;
-    let mut requests = page
-        .event_listener::<EventRequestWillBeSent>()
-        .await
-        .map_err(|_| Error::Browser)?;
-    let mut extras = page
-        .event_listener::<EventResponseReceivedExtraInfo>()
-        .await
-        .map_err(|_| Error::Browser)?;
-    navigate(page, &format!("{}/user/profile/{}", auth.origin, auth.identity)).await?;
-    for attempt in 0..45 {
-        challenge(page).await?;
-        if page
-            .evaluate("Boolean(document.querySelector('#app')?.__vue_app__)")
-            .await
-            .map_err(|_| Error::Browser)?
-            .into_value::<bool>()
-            .map_err(|_| Error::Browser)?
-        {
-            break;
-        }
-        if attempt == 44 {
-            return Err(Error::Browser);
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-    if !page
-        .evaluate(SELECT_COLLECTION)
-        .await
-        .map_err(|_| Error::Browser)?
-        .into_value::<bool>()
-        .map_err(|_| Error::Browser)?
-    {
-        return Err(Error::Browser);
-    }
-    for attempt in 0..20 {
-        if page
-            .evaluate("window.__INITIAL_STATE__?.user?.activeTab?._rawValue?.key === 1")
-            .await
-            .map_err(|_| Error::Browser)?
-            .into_value::<bool>()
-            .map_err(|_| Error::Browser)?
-        {
-            break;
-        }
-        if attempt == 19 {
-            return Err(Error::Browser);
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    let mut scan = Scan::default();
-    let mut pending = HashMap::<String, Value>::new();
-    let mut bodies = HashMap::<RequestId, std::sync::Arc<EventResponseReceived>>::new();
-    let mut ended = HashSet::<RequestId>::new();
-    let mut failed = HashSet::<RequestId>::new();
-    let mut rejected = HashMap::<RequestId, Error>::new();
-    let mut scoped = HashSet::<RequestId>::new();
-    let mut last_progress = tokio::time::Instant::now();
-    let mut tick = tokio::time::interval_at(last_progress + Duration::from_secs(5), Duration::from_secs(5));
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    // shortcut: bound this diagnostic run to 600 pages/15 minutes; remeasure before supporting larger catalogs.
-    while scan.visited.len() < 600 {
-        if let Some(id) = bodies.keys().find(|id| ended.contains(*id)).cloned() {
-            let event = bodies.remove(&id).ok_or(Error::Incomplete)?;
-            let url = collection_url(&event.response.url).ok_or(Error::InvalidData)?;
-            let query = url.query_pairs().collect::<HashMap<_, _>>();
-            if query.get("user_id").map(|v| v.as_ref()) != Some(auth.identity.as_str()) {
-                return Err(Error::IdentityUnverified);
-            }
-            let cursor = query.get("cursor").map_or("", |v| v.as_ref()).to_owned();
-            let body = response_body(page, &event).await?;
-            if scan.visited.contains(&cursor) || pending.insert(cursor, body).is_some() {
-                return Err(Error::Incomplete);
-            }
-            while let Some(body) = pending.remove(&scan.cursor) {
-                let cursor = scan.cursor.clone();
-                scan.accept(&cursor, &body)?;
-                last_progress = tokio::time::Instant::now();
-                let expected = page
-                    .evaluate("window.__INITIAL_STATE__?.user?.activeSubTab?._rawValue?.count ?? null")
-                    .await
-                    .map_err(|_| Error::Browser)?
-                    .into_value::<Option<u64>>()
-                    .map_err(|_| Error::InvalidData)?;
-                if scan.finish_window(expected)? {
-                    return Ok(scan.items);
-                }
-            }
-            continue;
-        }
-        tokio::select! {
-            biased;
-            event=extras.next()=>{
-                let event=event.ok_or(Error::Browser)?;
-                if let Some(error)=response_error(event.status_code) {
-                    if scoped.contains(&event.request_id) {return Err(error);}
-                    rejected.insert(event.request_id.clone(),error);
-                }
-            }
-            event=requests.next()=>{
-                let event=event.ok_or(Error::Browser)?;
-                if event.request.method=="GET" && collection_url(&event.request.url).is_some() {
-                    if let Some(error)=rejected.remove(&event.request_id) {return Err(error);}
-                    if failed.contains(&event.request_id) {return Err(Error::Network);}
-                    scoped.insert(event.request_id.clone());
-                }
-            }
-            event=responses.next()=>{
-                let event=event.ok_or(Error::Browser)?;
-                if event.r#type==chromiumoxide::cdp::browser_protocol::network::ResourceType::Preflight {continue;}
-                if collection_url(&event.response.url).is_some() {
-                    bodies.insert(event.request_id.clone(),event);
-                }
-            }
-            event=finished.next()=>{ended.insert(event.ok_or(Error::Browser)?.request_id.clone());}
-            event=failures.next()=>{
-                let id=event.ok_or(Error::Browser)?.request_id.clone();
-                if scoped.contains(&id) {return Err(Error::Network);}
-                failed.insert(id);
-            }
-            _=tick.tick()=>{
-                challenge(page).await?;
-                if last_progress.elapsed()>Duration::from_secs(60) {return Err(Error::Incomplete);}
-                scroll(page).await?;
-            }
-        }
-        if ended.len() > 10000 || failed.len() > 10000 {
-            return Err(Error::Incomplete);
-        }
-    }
-    Err(Error::Incomplete)
-}
-
 fn media_url(raw: &str) -> Result<Url> {
     let mut url = Url::parse(raw).map_err(|_| Error::MediaUnavailable)?;
     if url.scheme() == "http" {
@@ -686,6 +601,7 @@ fn media_url(raw: &str) -> Result<Url> {
             [
                 "sns-video-bd.xhscdn.com",
                 "sns-v11.rednotecdn.com",
+                "sns-v14.rednotecdn.com",
                 "sns-v27.rednotecdn.com",
                 "sns-v28.rednotecdn.com",
             ]
@@ -721,50 +637,6 @@ fn video_url(note: &Value) -> Result<Url> {
         .ok_or(Error::MediaUnavailable)?;
     // EF4 samples decode as H.264; ffprobe still verifies every file before publishing.
     media_url(best.1)
-}
-
-pub async fn detail(session: &Session, auth: &Auth, item: &Item) -> Result<Video> {
-    if !valid_id(&item.id) {
-        return Err(Error::InvalidData);
-    }
-    let mut url = Url::parse(&format!("{}/explore/{}", auth.origin, item.id)).map_err(|_| Error::InvalidData)?;
-    url.query_pairs_mut()
-        .append_pair("xsec_token", &item.token)
-        .append_pair("xsec_source", "pc_user");
-    navigate(&session.page, url.as_str()).await?;
-    let expression = format!(
-        "JSON.stringify(window.__INITIAL_STATE__?.note?.noteDetailMap?.[{}]?.note ?? null)",
-        serde_json::to_string(&item.id).map_err(|_| Error::InvalidData)?
-    );
-    let mut note = Value::Null;
-    for _ in 0..30 {
-        challenge(&session.page).await?;
-        let text = session
-            .page
-            .evaluate(expression.clone())
-            .await
-            .map_err(|_| Error::Browser)?
-            .into_value::<String>()
-            .map_err(|_| Error::Browser)?;
-        note = serde_json::from_str(&text).map_err(|_| Error::InvalidData)?;
-        if !note.is_null() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-    if note["noteId"] != item.id && note["note_id"] != item.id {
-        return Err(Error::InvalidData);
-    }
-    Ok(Video {
-        url: video_url(&note)?,
-        title: note["title"].as_str().unwrap_or("").chars().take(1024).collect(),
-        author: note["user"]["nickname"]
-            .as_str()
-            .unwrap_or("")
-            .chars()
-            .take(256)
-            .collect(),
-    })
 }
 
 pub struct Video {
@@ -803,135 +675,49 @@ pub async fn media_response(auth: &Auth, url: Url) -> Result<reqwest::Response> 
         _ => Err(Error::MediaUnavailable),
     }
 }
-pub async fn launch(root: &Path, browser: &Path) -> Result<Session> {
-    let session = Session::launch(root, browser).await?;
-    let configured = async {
-        let ua = session
-            .page
-            .evaluate("navigator.userAgent")
-            .await
-            .map_err(|_| Error::Browser)?
-            .into_value::<String>()
-            .map_err(|_| Error::Browser)?;
-        session
-            .page
-            .execute(
-                SetUserAgentOverrideParams::builder()
-                    .user_agent(ua)
-                    .accept_language("zh-CN,zh;q=0.9")
-                    .build()
-                    .map_err(|_| Error::Browser)?,
-            )
-            .await
-            .map_err(|_| Error::Browser)?;
-        session
-            .page
-            .execute(SetLocaleOverrideParams::builder().locale("zh_CN").build())
-            .await
-            .map_err(|_| Error::Browser)?;
-        // RedNote redirects can replace the renderer before the self response is read.
-        session
-            .page
-            .execute(
-                EnableParams::builder()
-                    .max_total_buffer_size(64 * 1024 * 1024)
-                    .max_resource_buffer_size(8 * 1024 * 1024)
-                    .enable_durable_messages(true)
-                    .build(),
-            )
-            .await
-            .map_err(|_| Error::Browser)?;
-        Ok(())
-    }
-    .await;
-    if let Err(error) = configured {
-        let _ = session.close().await;
-        return Err(error);
-    }
-    Ok(session)
-}
-
-pub async fn replace_cookies(session: &Session, auth: &Auth) -> Result<Vec<CookieParam>> {
-    let current = session
-        .page
-        .execute(
-            GetCookiesParams::builder()
-                .urls([
-                    "https://www.xiaohongshu.com",
-                    "https://www.rednote.com",
-                    "https://edith.xiaohongshu.com",
-                    "https://webapi.rednote.com",
-                ])
-                .build(),
-        )
-        .await
-        .map_err(|_| Error::Browser)?
-        .result
-        .cookies;
-    let mut backup = Vec::new();
-    for cookie in current {
-        let mut value = serde_json::to_value(cookie).map_err(|_| Error::InvalidData)?;
-        if value["expires"].as_f64().is_some_and(|v| v <= 0.) {
-            value.as_object_mut().ok_or(Error::InvalidData)?.remove("expires");
-        }
-        backup.push(serde_json::from_value::<CookieParam>(value).map_err(|_| Error::InvalidData)?);
-    }
-    if let Err(error) = reset_cookies(session, auth.cookie_params()?).await {
-        let _ = reset_cookies(session, backup).await;
-        return Err(error);
-    }
-    Ok(backup)
-}
-pub async fn reset_cookies(session: &Session, cookies: Vec<CookieParam>) -> Result<()> {
-    let current = session
-        .page
-        .execute(
-            GetCookiesParams::builder()
-                .urls([
-                    "https://www.xiaohongshu.com",
-                    "https://www.rednote.com",
-                    "https://edith.xiaohongshu.com",
-                    "https://webapi.rednote.com",
-                ])
-                .build(),
-        )
-        .await
-        .map_err(|_| Error::Browser)?
-        .result
-        .cookies;
-    for c in current {
-        let domain = c.domain.trim_start_matches('.');
-        if !["xiaohongshu.com", "rednote.com"]
-            .iter()
-            .any(|b| domain == *b || domain.ends_with(&format!(".{b}")))
-        {
-            continue;
-        }
-        session
-            .page
-            .execute(
-                DeleteCookiesParams::builder()
-                    .name(c.name)
-                    .domain(c.domain)
-                    .path(c.path)
-                    .build()
-                    .map_err(|_| Error::Browser)?,
-            )
-            .await
-            .map_err(|_| Error::Browser)?;
-    }
-    session
-        .page
-        .execute(SetCookiesParams::new(cookies))
-        .await
-        .map_err(|_| Error::Browser)?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn guest_wrong_account_and_platform_rejection_cannot_replace_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        let empty = Auth {
+            identity: "self123".into(),
+            origin: "https://www.rednote.com".into(),
+            ua: "fixture".into(),
+            cookies: vec![json!({"name":"web_session","value":"","domain":".rednote.com","path":"/","secure":true})],
+        };
+        std::fs::write(&path, serde_json::to_vec(&empty).unwrap()).unwrap();
+        assert!(matches!(Auth::read(&path), Err(Error::LoginExpired)));
+        let url = "https://webapi.rednote.com/api/sns/web/v2/user/me";
+        let body = json!({"success":true,"code":0,"data":{"guest":false,"user_id":"self123"}});
+        assert_eq!(
+            checked_identity(url, &body, Some("other"), None),
+            Err(Error::AccountChanged)
+        );
+        assert_eq!(
+            checked_identity(url, &body, None, Some("other")),
+            Err(Error::AccountChanged)
+        );
+        assert_eq!(
+            checked_identity(url, &body, Some("self123"), Some("self123")).unwrap(),
+            "self123"
+        );
+        let guest = json!({"success":true,"code":0,"data":{"guest":true}});
+        assert_eq!(checked_identity(url, &guest, None, None), Err(Error::LoginExpired));
+        assert_eq!(
+            business_status(&json!({"success":false,"code":-100})),
+            Err(Error::LoginExpired)
+        );
+        assert_eq!(
+            business_status(&json!({"success":false,"code":300012})),
+            Err(Error::Rejected)
+        );
+        assert_eq!(html_challenge(b"<html>IP at risk</html>"), Err(Error::Challenge));
+        assert!(html_challenge(b"<script>const message='IP at risk'</script><title>Note</title>").is_ok());
+    }
     fn body(id: &str, more: bool, cursor: &str) -> Value {
         json!({"success":true,"code":0,"data":{"has_more":more,"cursor":cursor,"notes":[{"note_id":id,"type":"video","xsec_token":"synthetic-token"}]}})
     }
@@ -1088,63 +874,14 @@ mod tests {
         assert_eq!(video_url(&opaque).unwrap().host_str(), Some("sns-v28.rednotecdn.com"));
         assert!(video_url(&json!({"video":{"consumer":{"originVideoKey":"stream/fixture.mp4"}}})).is_err());
     }
-    #[tokio::test]
-    #[ignore = "requires FAVKEEP_TEST_BROWSER; about:blank and synthetic cookies only"]
-    async fn fresh_login_cookie_swap_can_restore_the_previous_session() {
-        let browser = std::env::var_os("FAVKEEP_TEST_BROWSER").expect("set system Chromium");
-        let dir = tempfile::tempdir().unwrap();
-        let session = launch(dir.path(), Path::new(&browser)).await.unwrap();
-        let auth = |value: &str| Auth {
-            identity: "self".into(),
-            origin: "https://www.rednote.com".into(),
-            ua: "fixture".into(),
-            cookies: vec![json!({"name":"web_session","value":value,"domain":".rednote.com","path":"/","secure":true})],
-        };
-        session
-            .page
-            .execute(SetCookiesParams::new(vec![
-                CookieParam::builder()
-                    .name("sessionid")
-                    .value("unrelated")
-                    .domain(".douyin.com")
-                    .path("/")
-                    .build()
-                    .unwrap(),
-            ]))
-            .await
-            .unwrap();
-        replace_cookies(&session, &auth("old")).await.unwrap();
-        let backup = replace_cookies(&session, &auth("new")).await.unwrap();
-        let cookies = session
-            .page
-            .execute(GetCookiesParams::builder().urls(["https://www.rednote.com"]).build())
-            .await
-            .unwrap()
-            .result
-            .cookies;
-        assert!(cookies.iter().any(|c| c.name == "web_session" && c.value == "new"));
-        reset_cookies(&session, backup).await.unwrap();
-        let cookies = session
-            .page
-            .execute(
-                GetCookiesParams::builder()
-                    .urls(["https://www.rednote.com", "https://www.douyin.com"])
-                    .build(),
-            )
-            .await
-            .unwrap()
-            .result
-            .cookies;
-        assert!(cookies.iter().any(|c| c.name == "web_session" && c.value == "old"));
-        assert!(cookies.iter().any(|c| c.name == "sessionid" && c.value == "unrelated"));
-        session.close().await.unwrap();
-    }
     #[test]
     fn official_unauthorized_requires_login_while_rejection_requires_cooldown() {
         assert_eq!(response_error(401), Some(Error::LoginExpired));
-        for status in [403, 406, 429, 461, 471] {
+        for status in [403, 406, 429] {
             assert_eq!(response_error(status), Some(Error::Rejected));
         }
+        assert_eq!(response_error(461), Some(Error::Challenge));
+        assert_eq!(response_error(471), Some(Error::Challenge));
         assert_eq!(response_error(200), None);
         assert_eq!(response_error(500), None);
     }
