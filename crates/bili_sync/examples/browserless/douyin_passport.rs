@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Protocol/profile reference: cv-cat/catbus bcc72f81549b94090b340fb87f29927529056e49; see catbus-LICENSE.
+#[path = "douyin_download.rs"]
+mod download;
 use super::{Platform, capture, passport_sign as sign, write};
 use anyhow::{Context, Result, ensure};
 use reqwest::{
@@ -442,6 +444,9 @@ impl Passport<'_> {
             &self.root.join("collections-private.json"),
             &serde_json::to_vec_pretty(&json!({"collection_complete":true,"folders":collections}))?,
         )?;
+        if args.download_three {
+            self.download_three(args, &collections).await?;
+        }
         Ok(())
     }
     async fn call(

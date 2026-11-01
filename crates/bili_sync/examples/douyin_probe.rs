@@ -6,6 +6,8 @@ mod client;
 #[path = "../src/douyin/core.rs"]
 #[allow(dead_code)]
 mod core;
+#[path = "../src/douyin/media.rs"]
+mod media;
 #[path = "../src/resources.rs"]
 #[allow(dead_code)]
 mod resources;

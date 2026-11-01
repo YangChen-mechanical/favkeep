@@ -3,6 +3,8 @@
 mod ac_sign;
 #[path = "../src/utils/rc4.rs"]
 mod codec;
+#[path = "../src/douyin/media.rs"]
+mod douyin_media;
 #[path = "browserless/douyin_passport.rs"]
 mod douyin_passport;
 #[path = "../src/douyin/sign.rs"]
@@ -80,10 +82,10 @@ struct Args {
     /// Restore only a verified credential file produced by this browserless probe.
     #[arg(long, conflicts_with = "login")]
     restore_auth: Option<PathBuf>,
-    /// Read the fixed 50-item window after login or restoration.
+    /// Read the Xiaohongshu window or all selected Douyin folders after login or restoration.
     #[arg(long)]
     scan: bool,
-    /// Download and ffprobe-check exactly three videos from the verified window.
+    /// Download and ffprobe-check exactly three videos from the verified window or collections.
     #[arg(long, requires = "scan")]
     download_three: bool,
     #[arg(long, requires = "download_three")]
@@ -377,8 +379,8 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     ensure!(args.live, "explicit --live is required; no request sent");
     ensure!(
-        !(matches!(args.platform, Platform::Douyin) && args.download_three),
-        "Douyin media gate is not implemented yet; no request sent"
+        !matches!(args.platform, Platform::Douyin) || !args.download_three || args.douyin_passport,
+        "Douyin media gate requires --douyin-passport; no request sent"
     );
     ensure!(
         !(args.douyin_sso || args.douyin_passport) || matches!(args.platform, Platform::Douyin),
