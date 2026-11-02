@@ -1,5 +1,5 @@
 // The gate executes the application's HTTP client; no duplicated login or collection protocol.
-pub use super::douyin_app::{Error, Result, valid_id};
+pub use crate::platform::{Error, Result, valid_id};
 #[path = "../../src/xiaohongshu/client.rs"]
 mod client;
 use super::codec;

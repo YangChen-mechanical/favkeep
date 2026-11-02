@@ -12,7 +12,7 @@ use crate::api::{
     wrapper::{ApiError, ApiResponse},
 };
 use crate::config::VersionedConfig;
-use crate::douyin::{self, native::Auth, runtime, store};
+use crate::douyin::{self, Auth, runtime, store};
 
 pub(super) fn router() -> Router {
     Router::new()
@@ -101,7 +101,7 @@ async fn select(
         if input.enabled { "启用" } else { "停用" }
     );
     let auth = saved().inspect_err(|_| warn!("[抖音] 更新收藏来源未执行：请先连接账号"))?;
-    if !douyin::valid_id(&id) {
+    if !crate::platform::valid_id(&id) {
         warn!("[抖音] 更新收藏来源未执行：收藏夹标识无效");
         return Err(bad("无效收藏夹"));
     }

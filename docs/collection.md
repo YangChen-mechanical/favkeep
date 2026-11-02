@@ -17,12 +17,12 @@
 
 ### 视频合集
 
-![image](./assets/season.webp)
+![image](assets/season.webp)
 
 类型为 `合集（Season）`，用户 ID 为 `521722088`，合集 ID 为 `1987140`。
 
 ### 视频列表
 
-![image](./assets/series.webp)
+![image](assets/series.webp)
 
 类型为 `列表（Series）`，用户 ID 为 `521722088`，列表 ID 为 `387214`。

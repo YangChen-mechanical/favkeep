@@ -50,6 +50,7 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
     let refreshes = 0;
     let qrGenerations = 0;
     let qrPolls = 0;
+    let qrCancels = 0;
     let qrMode = 'pending';
     let resumes = 0;
     let runs = 0;
@@ -111,7 +112,13 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
         return json({ qrcode_key: 'synthetic-key', url: '', status: 'pending', message: '正在继续本次登录请求' });
       }
       if (url.pathname === '/api/login/qrcode/poll') {
-        assert.deepEqual(request.postDataJSON(), { qrcode_key: 'synthetic-key', platform: 'douyin' });
+        const body = request.postDataJSON();
+        if (body.cancel) {
+          assert.deepEqual(body, { qrcode_key: 'synthetic-key', platform: 'douyin', cancel: true });
+          qrCancels++;
+          return json({ status: 'cancelled' });
+        }
+        assert.deepEqual(body, { qrcode_key: 'synthetic-key', platform: 'douyin' });
         qrPolls++;
         return json(qrMode === 'success' ? { status: 'success' } : qrMode === 'failed' ? { status: 'verification_required', message: '请在服务器本机完成验证后重试' } : { status: 'pending', message: '请扫码确认', image: qrImage });
       }
@@ -209,6 +216,7 @@ const origin = process.env.FAVKEEP_TEST_ORIGIN || 'http://127.0.0.1:5187';
     await expect(page.getByRole('dialog')).toContainText('请在服务器本机完成验证后重试');
     await expect(page.getByRole('button', { name: '重新获取二维码', exact: true })).toBeVisible();
     await page.keyboard.press('Escape');
+    await expect.poll(() => qrCancels).toBeGreaterThan(0);
     assert.equal(refreshes, 1, 'Pending or failed login must not refresh folders');
 
     await page.getByRole('link', { name: '下一步：选择收藏来源', exact: true }).click();

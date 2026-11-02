@@ -24,7 +24,7 @@ Options:
 
 只在对应平台的配置或 `path` 字段缺省时生效；已有配置路径优先，不移动文件、不修改数据库中已有媒体路径，也不影响 B 站来源路径、命名模板或 `/downloads` 挂载。未设置时沿用原默认值：配置目录下的 `douyin-media` 与 `xiaohongshu-media`。
 
-宿主机目录与 Docker 挂载示例见 [三平台媒体目录](favkeep/media-paths.md)。
+宿主机目录与 Docker 挂载示例见 [三平台媒体目录](operations/media-paths.md)。
 
 ## `--scan-only`
 

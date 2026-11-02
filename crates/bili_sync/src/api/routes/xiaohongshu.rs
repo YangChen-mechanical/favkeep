@@ -4,7 +4,7 @@ use crate::{
         wrapper::{ApiError, ApiResponse},
     },
     config::VersionedConfig,
-    xiaohongshu::{self, client::Auth, runtime, store},
+    xiaohongshu::{self, Auth, runtime, store},
 };
 use axum::{
     Extension, Json, Router,

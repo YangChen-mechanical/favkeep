@@ -286,16 +286,20 @@ mod tests {
     use super::*;
     #[test]
     fn secrets_are_omitted_and_partial_updates_preserve_them() {
-        let mut config = Config::default();
-        config.credential = Credential {
-            sessdata: "SESSDATA_SECRET".into(),
-            bili_jct: "CSRF_SECRET".into(),
-            buvid3: "BUVID_SECRET".into(),
-            dedeuserid: "USER_SECRET".into(),
-            ac_time_value: "REFRESH_SECRET".into(),
+        let config = Config {
+            credential: Credential {
+                sessdata: "SESSDATA_SECRET".into(),
+                bili_jct: "CSRF_SECRET".into(),
+                buvid3: "BUVID_SECRET".into(),
+                dedeuserid: "USER_SECRET".into(),
+                ac_time_value: "REFRESH_SECRET".into(),
+            },
+            ..Default::default()
         };
         let value = public_config(&config).to_string();
-        let changed = merge_public(&config, json!({"version":config.version,"video_name":"changed"})).ok().unwrap();
+        let changed = merge_public(&config, json!({"version":config.version,"video_name":"changed"}))
+            .ok()
+            .unwrap();
         assert_eq!(changed.credential.sessdata, "SESSDATA_SECRET");
         assert_eq!(changed.auth_token, config.auth_token);
         assert_eq!(changed.video_name, "changed");
@@ -327,7 +331,9 @@ mod tests {
         let value = serde_json::to_value(updated).unwrap();
         assert_eq!(value["url"], "https://example.com/PRIVATE_TOKEN");
         assert_eq!(value["headers"]["Authorization"], "HEADER_SECRET");
-        let cleared = merge_notifier(json!({"type":"webhook","headers":null}), Some(&old)).ok().unwrap();
+        let cleared = merge_notifier(json!({"type":"webhook","headers":null}), Some(&old))
+            .ok()
+            .unwrap();
         assert!(serde_json::to_value(cleared).unwrap()["headers"].is_null());
     }
 }

@@ -1,3 +1,4 @@
+use crate::platform::Error as PlatformError;
 use crate::{
     api::{
         error::InnerApiError,
@@ -105,21 +106,21 @@ pub async fn poll_qrcode(
     Ok(ApiResponse::ok(value))
 }
 
-fn douyin_error(error: douyin::Error) -> InnerApiError {
+fn douyin_error(error: PlatformError) -> InnerApiError {
     InnerApiError::BadRequest(
         match error {
-            douyin::Error::Busy => "已有抖音登录请求进行中，请等待该次登录结束后重试",
-            douyin::Error::Paused => "抖音正在冷却，请等待后再验证连接",
-            douyin::Error::InvalidData => "二维码不属于当前登录会话，请重新生成",
+            PlatformError::Busy => "已有抖音登录请求进行中，请等待该次登录结束后重试",
+            PlatformError::Paused => "抖音正在冷却，请等待后再验证连接",
+            PlatformError::InvalidData => "二维码不属于当前登录会话，请重新生成",
             _ => "抖音连接服务暂时不可用，请稍后重试",
         }
         .into(),
     )
 }
 
-fn xiaohongshu_error(error: crate::xiaohongshu::Error) -> InnerApiError {
+fn xiaohongshu_error(error: PlatformError) -> InnerApiError {
     InnerApiError::BadRequest(match error {
-        douyin::Error::InvalidData => "二维码不属于当前登录会话，请重新生成".into(),
+        PlatformError::InvalidData => "二维码不属于当前登录会话，请重新生成".into(),
         _ => error.message().into(),
     })
 }

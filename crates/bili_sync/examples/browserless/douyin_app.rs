@@ -1,8 +1,5 @@
 //! Runs the production native client without opening the application database.
-#[path = "../../src/douyin/core.rs"]
-#[allow(dead_code)]
-pub(crate) mod core;
-pub use core::{Error, Result, valid_id};
+pub use crate::platform::{Error, Result, valid_id};
 #[path = "../../src/douyin/client.rs"]
 mod client;
 #[path = "../../src/utils/cookies.rs"]

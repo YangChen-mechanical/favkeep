@@ -1,4 +1,4 @@
-use super::{Error, Result};
+use crate::platform::{Error, Result};
 #[cfg(windows)]
 use base64::Engine;
 use serde::Serialize;

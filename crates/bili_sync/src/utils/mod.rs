@@ -1,5 +1,3 @@
-pub(crate) mod rc4;
-use crate::douyin::{Error, Result};
 pub mod convert;
 pub(crate) mod cookies;
 pub mod danmaku_schedule;
@@ -9,6 +7,7 @@ pub mod model;
 pub mod nfo;
 pub mod notify;
 pub mod private;
+pub(crate) mod rc4;
 pub mod rule;
 pub mod signal;
 pub mod status;

@@ -84,6 +84,3 @@ release = true
 [[bin]]
 name = "bili-sync-rs"
 path = "src/main.rs"
-
-[dev-dependencies]
-chromiumoxide = { workspace = true }

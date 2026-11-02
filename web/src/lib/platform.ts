@@ -1,6 +1,6 @@
 import type { MediaInfo } from './types';
 
-const douyinMessages: Record<string, string> = {
+const commonMessages: Record<string, string> = {
 	rejected: '平台拒绝了请求，请等待冷却后重试',
 	platform_rejected: '平台拒绝了请求，请等待冷却后重试',
 	challenge: '需要完成平台验证',
@@ -18,13 +18,29 @@ const douyinMessages: Record<string, string> = {
 	private_file_failed: '本地文件保存失败，请检查目录权限和磁盘空间',
 	media_unavailable: '视频暂时无法下载',
 	browser_token_unavailable: '未能确认连接，请重新连接后重试',
-	selection_changed_during_scan: '收藏夹选择已变化，下次同步会按最新选择执行',
-	account_busy: '抖音任务正在处理中，请稍候',
 	account_paused_or_cooling_down: '任务已暂停或正在冷却，请稍后检查'
 };
 
+const platformMessages = {
+	douyin: {
+		account_busy: '抖音任务正在处理中，请稍候',
+		selection_changed_during_scan: '收藏夹选择已变化，下次同步会按最新选择执行'
+	},
+	xiaohongshu: {
+		incomplete_pagination: '收藏窗口扫描未完成，本次未更新基线',
+		selection_changed_during_scan: '收藏窗口来源已变化，下次同步会按最新选择执行',
+		account_busy: '小红书任务正在处理中，请稍候'
+	}
+} satisfies Record<string, Record<string, string>>;
+
+function message(platform: keyof typeof platformMessages, code: string): string {
+	const overrides: Record<string, string> = platformMessages[platform];
+	if (Object.hasOwn(overrides, code)) return overrides[code];
+	return Object.hasOwn(commonMessages, code) ? commonMessages[code] : '需要检查';
+}
+
 export function douyinMessage(code: string): string {
-	return Object.hasOwn(douyinMessages, code) ? douyinMessages[code] : '需要检查';
+	return message('douyin', code);
 }
 
 export function biliStatuses(media: Pick<MediaInfo, 'platform_details'>): number[] {
@@ -34,8 +50,5 @@ export function biliStatuses(media: Pick<MediaInfo, 'platform_details'>): number
 }
 
 export function xiaohongshuMessage(code: string): string {
-	return douyinMessage(code)
-		.replaceAll('抖音', '小红书')
-		.replaceAll('收藏夹', '收藏窗口')
-		.replaceAll('选择已变化', '来源已变化');
+	return message('xiaohongshu', code);
 }

@@ -26,7 +26,6 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v6
 
-      - run: rustup install && rustup component add rustfmt --toolchain nightly
 
       - name: Cache dependencies
         uses: swatinem/rust-cache@v2
@@ -34,13 +33,15 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: cargo fmt check
-        run: cargo +nightly fmt --check
+        run: cargo fmt --all --check
 
       - name: cargo clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: cargo test
-        run: cargo test
+        run: cargo test --workspace --locked
+      - name: Native probe tests
+        run: cargo test --locked -p bili_sync --example browserless_probe
   check-frontend:
     name: Run frontend checks
     runs-on: ubuntu-24.04
@@ -61,8 +62,14 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('docs/bun.lockb') }}
+          key: ${{ runner.os }}-bun-${{ hashFiles('web/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-
       - name: Check Frontend
         run: bun run lint
+      - name: Frontend tests
+        run: bun run test
+      - name: Type checks
+        run: bun run check
+      - name: Production build
+        run: bun run build

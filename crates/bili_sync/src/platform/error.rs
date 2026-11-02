@@ -69,3 +69,46 @@ impl From<std::io::Error> for Error {
 pub fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 128 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_ids_without_platform_specific_rules() {
+        for id in ["123", "abc_DEF-9", &"a".repeat(128)] {
+            assert!(valid_id(id));
+        }
+        for id in ["", "../123", "a/b", "a?b", "空白", &"a".repeat(129)] {
+            assert!(!valid_id(id));
+        }
+    }
+
+    #[test]
+    fn keeps_error_codes_and_disk_full_mapping() {
+        for (error, code) in [
+            (Error::Busy, "account_busy"),
+            (Error::Paused, "account_paused_or_cooling_down"),
+            (Error::SelectionChanged, "selection_changed_during_scan"),
+            (Error::DiskFull, "disk_full"),
+            (Error::InvalidData, "invalid_platform_data"),
+            (Error::Incomplete, "incomplete_pagination"),
+            (Error::Rejected, "platform_rejected"),
+            (Error::LoginExpired, "login_expired"),
+            (Error::Challenge, "verification_required"),
+            (Error::IdentityUnverified, "identity_unverified"),
+            (Error::AccountChanged, "account_changed"),
+            (Error::Network, "network_failed"),
+            (Error::File, "private_file_failed"),
+            (Error::MediaUnavailable, "media_unavailable"),
+            (Error::TokenUnavailable, "browser_token_unavailable"),
+        ] {
+            assert_eq!(error.to_string(), code);
+            assert!(!error.message().is_empty());
+        }
+        for code in [28, 112] {
+            assert_eq!(Error::from(std::io::Error::from_raw_os_error(code)), Error::DiskFull);
+        }
+        assert_eq!(Error::from(std::io::Error::other("private detail")), Error::File);
+    }
+}

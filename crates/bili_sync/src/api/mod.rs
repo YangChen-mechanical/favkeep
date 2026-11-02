@@ -5,5 +5,5 @@ mod response;
 mod routes;
 mod wrapper;
 
-pub use routes::{LogHelper, MAX_HISTORY_LOGS, router};
 pub(crate) use response::GenerateQrcodeResponse;
+pub use routes::{LogHelper, MAX_HISTORY_LOGS, router};

@@ -1,11 +1,12 @@
-pub mod client;
+mod client;
 use crate::utils::cookies;
 use crate::utils::rc4 as codec;
+pub(crate) use client::Auth;
 mod sign;
 mod state;
-pub use crate::douyin::{Error, Result, valid_id};
+pub(crate) use crate::platform::{Error, Result, valid_id};
 pub static RUNNING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-pub mod login;
-pub mod progress;
-pub mod runtime;
-pub mod store;
+pub(crate) mod login;
+pub(crate) mod progress;
+pub(crate) mod runtime;
+pub(crate) mod store;

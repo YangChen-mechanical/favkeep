@@ -1,8 +1,11 @@
-import { toast } from 'svelte-sonner';
 import { get } from 'svelte/store';
-import api from './api';
+import { authApi } from './api/auth';
 import { authSession } from './stores/auth';
 import type { SysInfo, TaskStatus } from './types';
+
+function notifyError(message: string, description?: string) {
+	void import('svelte-sonner').then(({ toast }) => toast.error(message, { description }));
+}
 
 // 支持的事件类型
 export enum EventType {
@@ -77,7 +80,7 @@ export class WebSocketManager {
 				this.socket.onclose = () => {
 					this.connected = false;
 					this.connectionPromise = null;
-					void api
+					void authApi
 						.getSession()
 						.then(({ data }) => {
 							if (data.authenticated) this.scheduleReconnect();
@@ -89,13 +92,13 @@ export class WebSocketManager {
 					console.error('WebSocket error:', error);
 					this.connectionPromise = null;
 					reject(error);
-					toast.error('WebSocket 连接发生错误，请检查网络或稍后重试');
+					notifyError('WebSocket 连接发生错误，请检查网络或稍后重试');
 				};
 			} catch (error) {
 				this.connectionPromise = null;
 				reject(error);
 				console.error('Failed to create WebSocket:', error);
-				toast.error('创建 WebSocket 连接失败，请检查网络或稍后重试');
+				notifyError('创建 WebSocket 连接失败，请检查网络或稍后重试');
 				this.scheduleReconnect();
 			}
 		});
@@ -116,9 +119,10 @@ export class WebSocketManager {
 			}
 		} catch (error) {
 			console.error('Failed to parse WebSocket message:', error, event.data);
-			toast.error('解析 WebSocket 消息失败', {
-				description: `消息内容：${event.data}\n错误信息：${error instanceof Error ? error.message : String(error)}`
-			});
+			notifyError(
+				'解析 WebSocket 消息失败',
+				`消息内容：${event.data}\n错误信息：${error instanceof Error ? error.message : String(error)}`
+			);
 		}
 	}
 
@@ -131,9 +135,10 @@ export class WebSocketManager {
 			this.socket!.send(JSON.stringify(message));
 		} catch (error) {
 			console.error('Failed to send message:', error);
-			toast.error('发送 WebSocket 消息失败', {
-				description: `消息内容：${JSON.stringify(message)}\n错误信息：${error instanceof Error ? error.message : String(error)}`
-			});
+			notifyError(
+				'发送 WebSocket 消息失败',
+				`消息内容：${JSON.stringify(message)}\n错误信息：${error instanceof Error ? error.message : String(error)}`
+			);
 		}
 	}
 

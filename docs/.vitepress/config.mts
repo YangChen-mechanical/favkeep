@@ -3,8 +3,9 @@ import taskLists from "markdown-it-task-lists";
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
-	title: "bili-sync",
-	description: "由 Rust & Tokio 驱动的哔哩哔哩同步工具",
+ srcExclude: ["migration-from-bili-sync.md", "migration-result-*.md"],
+	title: "favkeep",
+	description: "个人视频归档与观看应用",
 	lang: "zh-Hans",
 	sitemap: {
 		hostname: "https://bili-sync.github.io",
@@ -24,7 +25,7 @@ export default defineConfig({
 				text: "v2.11.1",
 				items: [
 					{
-						text: "程序更新",
+						text: "上游程序更新",
 						link: "https://github.com/amtoaer/bili-sync/releases",
 					},
 					{
@@ -35,8 +36,19 @@ export default defineConfig({
 			},
 		],
 		sidebar: [
+ { text: "favkeep", items: [
+ { text: "代码结构", link: "/architecture" },
+ { text: "开发与检查", link: "/development/README" },
+ { text: "开发路线", link: "/development/roadmap" },
+ { text: "应用认证", link: "/operations/authentication" },
+ { text: "媒体路径", link: "/operations/media-paths" },
+ { text: "部署准备", link: "/operations/deployment" },
+ { text: "抖音", link: "/platforms/douyin" },
+ { text: "小红书", link: "/platforms/xiaohongshu" },
+ { text: "历史记录", link: "/archive/README" }
+ ] },
 			{
-				text: "简介",
+				text: "上游参考",
 				items: [
 					{ text: "什么是 bili-sync？", link: "/introduction" },
 					{ text: "快速开始", link: "/quick-start" },

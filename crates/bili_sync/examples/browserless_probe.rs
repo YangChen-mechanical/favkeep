@@ -1,4 +1,7 @@
 //! Isolated browser-free login/restore protocol gate; never opens an application database or imports browser sessions.
+#[path = "../src/platform/error.rs"]
+#[allow(dead_code)]
+mod platform;
 use douyin_app::native::ac_sign;
 #[path = "../src/utils/rc4.rs"]
 mod codec;

@@ -1,6 +1,6 @@
 use crate::{
     config::ARGS,
-    douyin::{Error, Result},
+    platform::{Error, Result},
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};

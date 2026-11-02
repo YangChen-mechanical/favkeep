@@ -1,3 +1,6 @@
+mod error;
+pub(crate) use error::{Error, Result, valid_id};
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
@@ -14,7 +17,7 @@ pub enum Platform {
 }
 
 impl Platform {
-    pub fn parse(value: &str) -> Result<Self, UnsupportedPlatform> {
+    pub fn parse(value: &str) -> std::result::Result<Self, UnsupportedPlatform> {
         match value {
             "bilibili" => Ok(Self::Bilibili),
             "douyin" => Ok(Self::Douyin),
