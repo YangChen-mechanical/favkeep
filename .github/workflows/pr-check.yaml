@@ -3,13 +3,15 @@ name: Check
 on:
   push:
     branches:
-      - main
+      - favkeep
   pull_request:
     types: ["opened", "reopened", "synchronize", "ready_for_review"]
 
+permissions:
+  contents: read
+
 concurrency:
-  # Allow only one workflow per any non-`main` branch.
-  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -30,7 +32,15 @@ jobs:
       - name: Cache dependencies
         uses: swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/favkeep' }}
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+      - name: Build embedded frontend
+        working-directory: web
+        run: bun install --frozen-lockfile && bun run build
 
       - name: cargo fmt check
         run: cargo fmt --all --check
@@ -55,7 +65,7 @@ jobs:
       - name: Setup bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.4.4"
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Cache dependencies

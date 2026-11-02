@@ -7,9 +7,6 @@ export default defineConfig({
 	title: "favkeep",
 	description: "个人视频归档与观看应用",
 	lang: "zh-Hans",
-	sitemap: {
-		hostname: "https://bili-sync.github.io",
-	},
 	lastUpdated: true,
 	cleanUrls: true,
 	metaChunk: true,
@@ -22,27 +19,29 @@ export default defineConfig({
 		nav: [
 			{ text: "主页", link: "/" },
 			{
-				text: "v2.11.1",
+				text: "开发中",
 				items: [
 					{
-						text: "上游程序更新",
-						link: "https://github.com/amtoaer/bili-sync/releases",
+						text: "项目源码",
+						link: "https://github.com/YangChen-mechanical/favkeep",
 					},
 					{
 						text: "文档更新",
-						link: "https://github.com/search?q=repo:amtoaer/bili-sync+docs&type=commits",
+						link: "https://github.com/YangChen-mechanical/favkeep/commits/favkeep/docs",
 					},
 				],
 			},
 		],
 		sidebar: [
  { text: "favkeep", items: [
+ { text: "快速开始", link: "/quick-start" },
  { text: "代码结构", link: "/architecture" },
  { text: "开发与检查", link: "/development/README" },
  { text: "开发路线", link: "/development/roadmap" },
  { text: "应用认证", link: "/operations/authentication" },
  { text: "媒体路径", link: "/operations/media-paths" },
- { text: "部署准备", link: "/operations/deployment" },
+ { text: "升级与回退", link: "/operations/deployment" },
+ { text: "开源检查", link: "/development/open-source" },
  { text: "抖音", link: "/platforms/douyin" },
  { text: "小红书", link: "/platforms/xiaohongshu" },
  { text: "历史记录", link: "/archive/README" }
@@ -51,7 +50,6 @@ export default defineConfig({
 				text: "上游参考",
 				items: [
 					{ text: "什么是 bili-sync？", link: "/introduction" },
-					{ text: "快速开始", link: "/quick-start" },
 				],
 			},
 			{
@@ -82,7 +80,7 @@ export default defineConfig({
 			}
 		],
 		socialLinks: [
-			{ icon: "github", link: "https://github.com/amtoaer/bili-sync" },
+			{ icon: "github", link: "https://github.com/YangChen-mechanical/favkeep" },
 		],
 		search: {
 			provider: "local",
@@ -116,6 +114,5 @@ export default defineConfig({
 	},
 	head: [
 		["link", { rel: "icon", type: "image/svg+xml", href: "/icon.svg" }],
-		["link", { rel: "icon", type: "image/png", href: "/icon.png" }],
 	],
 });

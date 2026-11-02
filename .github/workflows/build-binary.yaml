@@ -3,6 +3,9 @@ name: Build Binary
 on:
   workflow_call:
 
+permissions:
+  contents: read
+
 jobs:
   build-frontend:
     name: Build frontend
@@ -16,7 +19,7 @@ jobs:
       - name: Setup bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.4.4"
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Cache dependencies
@@ -97,11 +100,16 @@ jobs:
       - name: Package as archive
         shell: bash
         run: |
+          package_dir="$RUNNER_TEMP/favkeep-package"
+          mkdir -p "$package_dir/licenses"
+          cp License THIRD_PARTY_NOTICES.md "$package_dir/"
+          cp licenses/* crates/bili_sync/src/douyin/LICENSE-F2 crates/bili_sync/src/douyin/native/catbus-LICENSE crates/bili_sync/src/xiaohongshu/xhshow-LICENSE "$package_dir/licenses/"
+          cp "target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }}" "$package_dir/"
           cd target/${{ matrix.platform.target }}/release
           if [[ "${{ matrix.platform.target }}" == "x86_64-pc-windows-msvc" ]]; then
-            7z a ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
+            7z a "${{ github.workspace }}/${{ matrix.platform.name }}" "$package_dir/*"
           else
-            tar czvf ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
+            tar czf "${{ github.workspace }}/${{ matrix.platform.name }}" -C "$package_dir" .
           fi
       - name: Upload release artifact
         uses: actions/upload-artifact@v6

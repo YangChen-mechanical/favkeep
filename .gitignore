@@ -26,3 +26,9 @@ __pycache__/
 /raspberry-pi-server.md
 /docs/migration-from-bili-sync.md
 /docs/migration-result-*.md
+
+# Private release evidence is kept outside the public source snapshot
+/docs/operations/*-private.*
+*.bundle
+*.pem
+*.key

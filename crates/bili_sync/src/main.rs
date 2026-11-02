@@ -99,7 +99,7 @@ async fn init() -> Result<(Arc<BiliClient>, DatabaseConnection, LogHelper)> {
 
     init_logger(&ARGS.log_level, Some(log_writer.clone()));
     info!("欢迎使用 Bili-Sync，当前程序版本：{}", config::version());
-    info!("项目地址：https://github.com/amtoaer/bili-sync");
+    info!("项目地址：https://github.com/YangChen-mechanical/favkeep");
 
     if ARGS.reset_password {
         let connection = setup_database(&CONFIG_DIR.join("data.sqlite")).await?;

@@ -1,41 +1,25 @@
-name: Build Main Docs
+name: Build documentation (no publishing)
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "docs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   doc:
-    name: Build documentation
     runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: docs
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v6
-      - name: Setup bun
-        uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-      - name: Cache dependencies
-        uses: actions/cache@v5
+          bun-version: "1.4.4"
+      - run: bun install --frozen-lockfile
+      - run: bun run docs:build
+      - uses: actions/upload-artifact@v6
         with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('docs/bun.lockb') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-      - name: Build documentation
-        run: bun run docs:build
-      - name: Deploy Github Pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: docs/.vitepress/dist
-          force_orphan: true
-          commit_message: 部署来自 main 的最新文档变更：
+          name: favkeep-docs
+          path: docs/.vitepress/dist

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Port of F2's abogus.py, copyright JohnserfSeed, licensed under Apache-2.0.
+// Modified for Rust and deterministic offline tests; see ../../src/douyin/LICENSE-F2.
 // https://github.com/Johnserf-Seed/f2/blob/f6be8c0ffba9a127075bbeafe4838716650b6325/f2/utils/crypto/bytedance/abogus.py
 use sm3::{Digest, Sm3};
 
