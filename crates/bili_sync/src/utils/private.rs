@@ -62,6 +62,41 @@ pub fn write_private(path: &Path, data: &impl Serialize) -> Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn serialization_failure_preserves_the_previous_credentials() {
+        struct Invalid;
+        impl Serialize for Invalid {
+            fn serialize<S: serde::Serializer>(&self, _: S) -> std::result::Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("synthetic serialization failure"))
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        write_private(&path, &json!({"old":"credential"})).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert_eq!(write_private(&path, &Invalid), Err(Error::InvalidData));
+        assert_eq!(std::fs::read(path).unwrap(), before);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_atomic_replace_preserves_the_previous_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        write_private(&path, &json!({"old":"credential"})).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let permissions = std::fs::metadata(&path).unwrap().permissions();
+        let mut readonly = permissions.clone();
+        readonly.set_readonly(true);
+        std::fs::set_permissions(&path, readonly).unwrap();
+        let result = write_private(&path, &json!({"new":"credential"}));
+        std::fs::set_permissions(&path, permissions).unwrap();
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(path).unwrap(), before);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
     #[test]
     fn private_storage_restricts_directory_and_export() {
         let parent = tempfile::tempdir().unwrap();

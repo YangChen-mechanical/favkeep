@@ -423,6 +423,7 @@ mod tests {
     #[tokio::test]
     async fn revoked_or_cancelled_login_preserves_existing_credentials() {
         use bili_sync_migration::{Migrator, MigratorTrait};
+        use sea_orm::ConnectionTrait;
         let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
         Migrator::up(&db, None).await.unwrap();
         let dir = tempfile::tempdir().unwrap();
@@ -445,9 +446,11 @@ mod tests {
             persist_verified("revoked", &state, &cancel, &path, &candidate).await,
             Err(Error::LoginExpired)
         );
+        state.db.execute_unprepared("INSERT INTO app_identity(id,username,password_hash,auth_version,updated_at) VALUES(1,'test','unused',1,0);INSERT INTO app_session(session_hash,data,auth_version,created_at,last_seen_at,expires_at) VALUES('owner','{}',1,CAST(strftime('%s','now') AS INTEGER),0,CAST(strftime('%s','now') AS INTEGER)+60);").await.unwrap();
+        assert!(state.valid_hash("owner").await.unwrap().is_some());
         cancel.cancel();
         assert_eq!(
-            persist_verified("revoked", &state, &cancel, &path, &candidate).await,
+            persist_verified("owner", &state, &cancel, &path, &candidate).await,
             Err(Error::LoginExpired)
         );
         assert_eq!(std::fs::read(path).unwrap(), before);
