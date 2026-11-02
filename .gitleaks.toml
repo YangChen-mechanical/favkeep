@@ -3,5 +3,5 @@ useDefault = true
 
 [[allowlists]]
 description = "Historical SQLite upsert syntax; no credential value is present"
-regexTarget = "line"
-regexes = ['''token=excluded\.token,qualified=xiaohongshu_seen\.qualified OR excluded\.qualified''']
+regexTarget = "match"
+regexes = ['''^excluded\.token,qualified=xiaohongshu_seen\.qualified\s*$''']

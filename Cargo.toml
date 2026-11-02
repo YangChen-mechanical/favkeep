@@ -105,13 +105,8 @@ validator = { version = "0.20.0", features = ["derive"] }
 release = false
 tag-message = ""
 tag-prefix = ""
-pre-release-commit-message = "chore: 发布 bili-sync {{version}}"
+pre-release-commit-message = "chore: 发布 favkeep {{version}}"
 publish = false
-pre-release-replacements = [
-    { file = "../../docs/.vitepress/config.mts", search = "\"v[0-9\\.]+\"", replace = "\"v{{version}}\"", exactly = 1 },
-    { file = "../../docs/introduction.md", search = " v[0-9\\.]+，", replace = " v{{version}}，", exactly = 1 },
-    { file = "../../web/package.json", search = "\"version\": \"[0-9\\.]+\"", replace = "\"version\": \"{{version}}\"", exactly = 1 },
-]
 
 [profile.dev.package."*"]
 debug = false
