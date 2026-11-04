@@ -392,7 +392,7 @@
 </script>
 
 <svelte:head>
-	<title>主页 - Bili Sync</title>
+	<title>主页 - favkeep</title>
 </svelte:head>
 
 <div class="mb-4 flex items-center justify-between">

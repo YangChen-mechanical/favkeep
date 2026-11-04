@@ -4,7 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import AppSidebar from '$lib/components/app-sidebar.svelte';
-	import BreadCrumb from '$lib/components/bread-crumb.svelte';
+	import * as Breadcrumb from '$lib/components/ui/breadcrumb/index.js';
 	import { Separator } from '$lib/components/ui/separator/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { breadcrumbStore } from '$lib/stores/breadcrumb';
@@ -90,7 +90,22 @@
 					<div class="flex items-center gap-2">
 						<Sidebar.Trigger class="-ml-1" />
 						<Separator orientation="vertical" class="mr-2 data-[orientation=vertical]:h-4" />
-						<BreadCrumb items={$breadcrumbStore} />
+						<Breadcrumb.Root>
+							<Breadcrumb.List>
+								{#each $breadcrumbStore as item, index (item.label)}
+									<Breadcrumb.Item class="hidden md:block">
+										{#if item.href}
+											<Breadcrumb.Link href={item.href}>{item.label}</Breadcrumb.Link>
+										{:else}
+											<Breadcrumb.Page>{item.label}</Breadcrumb.Page>
+										{/if}
+									</Breadcrumb.Item>
+									{#if index < $breadcrumbStore.length - 1}
+										<Breadcrumb.Separator class="hidden md:block" />
+									{/if}
+								{/each}
+							</Breadcrumb.List>
+						</Breadcrumb.Root>
 					</div>
 					<Button variant="ghost" onclick={logout}>退出登录</Button>
 				</header>

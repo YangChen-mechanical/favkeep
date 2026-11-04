@@ -37,6 +37,7 @@ export default defineConfig({
  { text: "快速开始", link: "/quick-start" },
  { text: "代码结构", link: "/architecture" },
  { text: "开发与检查", link: "/development/README" },
+ { text: "开发与发布流程", link: "/operations/development-release-workflow" },
  { text: "开发路线", link: "/development/roadmap" },
  { text: "应用认证", link: "/operations/authentication" },
  { text: "媒体路径", link: "/operations/media-paths" },

@@ -7,7 +7,6 @@ import Footer from './alert-dialog-footer.svelte';
 import Header from './alert-dialog-header.svelte';
 import Overlay from './alert-dialog-overlay.svelte';
 import Title from './alert-dialog-title.svelte';
-import Trigger from './alert-dialog-trigger.svelte';
 
 const Root = AlertDialogPrimitive.Root;
 const Portal = AlertDialogPrimitive.Portal;
@@ -25,7 +24,6 @@ export {
 	Overlay as AlertDialogOverlay,
 	Portal as AlertDialogPortal,
 	Title as AlertDialogTitle,
-	Trigger as AlertDialogTrigger,
 	Cancel,
 	Content,
 	Description,
@@ -34,6 +32,5 @@ export {
 	Overlay,
 	Portal,
 	Root,
-	Title,
-	Trigger
+	Title
 };

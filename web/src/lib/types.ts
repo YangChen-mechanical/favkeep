@@ -1,4 +1,13 @@
-export type * from './types/common';
+export interface ApiResponse<T> {
+	status_code: number;
+	data: T;
+}
+
+export interface ApiError {
+	message: string;
+	status: number;
+}
+
 export type * from './types/config';
 export type * from './types/media';
 export type * from './types/platforms';

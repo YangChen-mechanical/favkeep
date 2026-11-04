@@ -53,7 +53,7 @@ def main():
         assert signed_query == f"{query}&a_bogus={signature}"
         vectors.append(dict(name=name, query=query, body=body, ua=ua, fingerprint=fingerprint,
                             start_ms=start, end_ms=end, random=random_values, signature=signature))
-    output = Path(__file__).resolve().parents[1] / "crates/bili_sync/src/douyin/fixtures/sign.json"
+    output = Path(__file__).resolve().parents[1] / "crates/favkeep/src/douyin/fixtures/sign.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps({"upstream_commit": "f6be8c0ffba9a127075bbeafe4838716650b6325",
                                   "vectors": vectors}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

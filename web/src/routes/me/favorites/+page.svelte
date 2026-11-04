@@ -43,7 +43,7 @@
 </script>
 
 <svelte:head>
-	<title>我创建的收藏夹 - Bili Sync</title>
+	<title>我创建的收藏夹 - favkeep</title>
 </svelte:head>
 
 <a class="mb-4 inline-block text-sm underline" href="/platforms/bilibili?view=sources"

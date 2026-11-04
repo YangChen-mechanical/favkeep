@@ -336,7 +336,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bili_sync"
+name = "favkeep"
 version = "2.11.1"
 dependencies = [
  "anyhow",
@@ -347,8 +347,8 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
- "bili_sync_entity",
- "bili_sync_migration",
+ "favkeep_entity",
+ "favkeep_migration",
  "built",
  "chrono",
  "clap",
@@ -407,7 +407,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bili_sync_entity"
+name = "favkeep_entity"
 version = "2.11.1"
 dependencies = [
  "derivative",
@@ -419,7 +419,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bili_sync_migration"
+name = "favkeep_migration"
 version = "2.11.1"
 dependencies = [
  "sea-orm-migration",

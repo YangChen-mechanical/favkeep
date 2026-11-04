@@ -37,7 +37,7 @@ jobs:
           name: web-build
           path: web/build
   build:
-    name: Build bili-sync-rs for ${{ matrix.platform.release_for }}
+    name: Build favkeep for ${{ matrix.platform.release_for }}
     needs: build-frontend
     runs-on: ${{ matrix.platform.os }}
     strategy:
@@ -46,33 +46,33 @@ jobs:
           - release_for: Linux-armv7
             os: ubuntu-24.04
             target: armv7-unknown-linux-musleabihf
-            bin: bili-sync-rs
-            name: bili-sync-rs-Linux-armv7-musl.tar.gz
+            bin: favkeep
+            name: favkeep-Linux-armv7-musl.tar.gz
           - release_for: Linux-x86_64
             os: ubuntu-24.04
             target: x86_64-unknown-linux-musl
-            bin: bili-sync-rs
-            name: bili-sync-rs-Linux-x86_64-musl.tar.gz
+            bin: favkeep
+            name: favkeep-Linux-x86_64-musl.tar.gz
           - release_for: Linux-aarch64
             os: ubuntu-24.04
             target: aarch64-unknown-linux-musl
-            bin: bili-sync-rs
-            name: bili-sync-rs-Linux-aarch64-musl.tar.gz
+            bin: favkeep
+            name: favkeep-Linux-aarch64-musl.tar.gz
           - release_for: macOS-x86_64
             os: macOS-latest
             target: x86_64-apple-darwin
-            bin: bili-sync-rs
-            name: bili-sync-rs-Darwin-x86_64.tar.gz
+            bin: favkeep
+            name: favkeep-Darwin-x86_64.tar.gz
           - release_for: macOS-aarch64
             os: macOS-latest
             target: aarch64-apple-darwin
-            bin: bili-sync-rs
-            name: bili-sync-rs-Darwin-aarch64.tar.gz
+            bin: favkeep
+            name: favkeep-Darwin-aarch64.tar.gz
           - release_for: Windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
-            bin: bili-sync-rs.exe
-            name: bili-sync-rs-Windows-x86_64.zip
+            bin: favkeep.exe
+            name: favkeep-Windows-x86_64.zip
     steps:
       - name: Checkout repo
         uses: actions/checkout@v6
@@ -103,7 +103,7 @@ jobs:
           package_dir="$RUNNER_TEMP/favkeep-package"
           mkdir -p "$package_dir/licenses"
           cp License THIRD_PARTY_NOTICES.md "$package_dir/"
-          cp licenses/* crates/bili_sync/src/douyin/LICENSE-F2 crates/bili_sync/src/douyin/native/catbus-LICENSE crates/bili_sync/src/xiaohongshu/xhshow-LICENSE "$package_dir/licenses/"
+          cp licenses/* crates/favkeep/src/douyin/LICENSE-F2 crates/favkeep/src/douyin/native/catbus-LICENSE crates/favkeep/src/xiaohongshu/xhshow-LICENSE "$package_dir/licenses/"
           cp "target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }}" "$package_dir/"
           cd target/${{ matrix.platform.target }}/release
           if [[ "${{ matrix.platform.target }}" == "x86_64-pc-windows-msvc" ]]; then
@@ -114,6 +114,6 @@ jobs:
       - name: Upload release artifact
         uses: actions/upload-artifact@v6
         with:
-          name: bili-sync-rs-${{ matrix.platform.release_for }}
+          name: favkeep-${{ matrix.platform.release_for }}
           path: |
             ${{ github.workspace }}/${{ matrix.platform.name }}

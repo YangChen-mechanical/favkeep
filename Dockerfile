@@ -9,17 +9,17 @@ RUN apk update && apk add --no-cache \
     tzdata \
     ffmpeg
 
-COPY ./bili-sync-rs-Linux-*.tar.gz  ./targets/
+COPY ./favkeep-Linux-*.tar.gz  ./targets/
 
 RUN if [ "$TARGETPLATFORM" = "linux/amd64" ]; then \
-    tar xzvf ./targets/bili-sync-rs-Linux-x86_64-musl.tar.gz  -C ./; \
+    tar xzvf ./targets/favkeep-Linux-x86_64-musl.tar.gz  -C ./; \
     elif [ "$TARGETPLATFORM" = "linux/arm/v7" ]; then \
-    tar xzvf ./targets/bili-sync-rs-Linux-armv7-musl.tar.gz  -C ./; \
+    tar xzvf ./targets/favkeep-Linux-armv7-musl.tar.gz  -C ./; \
     else \
-    tar xzvf ./targets/bili-sync-rs-Linux-aarch64-musl.tar.gz  -C ./; \
+    tar xzvf ./targets/favkeep-Linux-aarch64-musl.tar.gz  -C ./; \
     fi
 
-RUN rm -rf ./targets && chmod +x ./bili-sync-rs
+RUN rm -rf ./targets && chmod +x ./favkeep
 
 FROM scratch
 
@@ -29,10 +29,10 @@ ENV LANG=zh_CN.UTF-8 \
     TZ=Asia/Shanghai \
     HOME=/app \
     RUST_BACKTRACE=1 \
-    RUST_LOG=None,bili_sync=info
+    RUST_LOG=None,favkeep=info
 
 COPY --from=base / /
 
-ENTRYPOINT [ "/app/bili-sync-rs" ]
+ENTRYPOINT [ "/app/favkeep" ]
 
-VOLUME [ "/app/.config/bili-sync" ]
+VOLUME [ "/app/.config/favkeep" ]

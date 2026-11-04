@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/*"]
-default-members = ["crates/bili_sync"]
+default-members = ["crates/favkeep"]
 resolver = "2"
 
 [workspace.package]
@@ -12,8 +12,8 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
-bili_sync_entity = { path = "crates/bili_sync_entity" }
-bili_sync_migration = { path = "crates/bili_sync_migration" }
+favkeep_entity = { path = "crates/favkeep_entity" }
+favkeep_migration = { path = "crates/favkeep_migration" }
 
 argon2 = "0.5.3"
 rpassword = "7.4.0"

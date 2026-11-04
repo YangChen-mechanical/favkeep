@@ -57,7 +57,7 @@
 </script>
 
 <svelte:head>
-	<title>日志 - Bili Sync</title>
+	<title>日志 - favkeep</title>
 </svelte:head>
 
 <div class="space-y-1">

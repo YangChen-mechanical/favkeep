@@ -50,8 +50,8 @@ jobs:
 
       - name: cargo test
         run: cargo test --workspace --locked
-      - name: Native probe tests
-        run: cargo test --locked -p bili_sync --example browserless_probe
+      - name: Protocol verification tests
+        run: cargo test --locked -p favkeep --example protocol_probe
   check-frontend:
     name: Run frontend checks
     runs-on: ubuntu-24.04
