@@ -3,7 +3,19 @@ import taskLists from "markdown-it-task-lists";
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
- srcExclude: ["migration-from-bili-sync.md", "migration-result-*.md"],
+	srcExclude: [
+		"migration-from-bili-sync.md",
+		"migration-result-*.md",
+		"archive/**",
+		"design/**",
+		"favkeep/**",
+		"development/upstream-reference.md",
+		"development/refactor-20261102.md",
+		"operations/development-release-workflow.md",
+		"operations/release-20261102.md",
+		"operations/*-private.*",
+		"file-guide.html",
+	],
 	title: "favkeep",
 	description: "个人视频归档与观看应用",
 	lang: "zh-Hans",
@@ -37,15 +49,13 @@ export default defineConfig({
  { text: "快速开始", link: "/quick-start" },
  { text: "代码结构", link: "/architecture" },
  { text: "开发与检查", link: "/development/README" },
- { text: "开发与发布流程", link: "/operations/development-release-workflow" },
  { text: "开发路线", link: "/development/roadmap" },
  { text: "应用认证", link: "/operations/authentication" },
  { text: "媒体路径", link: "/operations/media-paths" },
  { text: "升级与回退", link: "/operations/deployment" },
- { text: "开源检查", link: "/development/open-source" },
+ { text: "支持与开源检查", link: "/development/open-source" },
  { text: "抖音", link: "/platforms/douyin" },
  { text: "小红书", link: "/platforms/xiaohongshu" },
- { text: "历史记录", link: "/archive/README" }
  ] },
 			{
 				text: "上游参考",

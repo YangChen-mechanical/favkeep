@@ -32,3 +32,13 @@ __pycache__/
 *.bundle
 *.pem
 *.key
+
+# Private design, validation and maintainer notes
+/docs/archive/
+/docs/design/
+/docs/favkeep/
+/docs/development/upstream-reference.md
+/docs/development/refactor-20261102.md
+/docs/operations/development-release-workflow.md
+/docs/operations/release-20261102.md
+/docs/file-guide.html
