@@ -38,6 +38,7 @@ pub struct StoredFolder {
 pub struct Pending {
     pub id: i32,
     pub platform_id: String,
+    pub path: String,
 }
 
 #[derive(Debug, Default)]
@@ -354,7 +355,7 @@ pub async fn folder_error(db: &DatabaseConnection, identity: &str, folder_id: &s
     Ok(())
 }
 
-const ELIGIBLE_SQL: &str = "SELECT DISTINCT v.id,v.platform_id FROM video v JOIN page p ON p.video_id=v.id JOIN douyin_download d ON d.page_id=p.id JOIN douyin_folder_item i ON i.platform_id=v.platform_id JOIN douyin_folder f ON f.identity=i.identity AND f.id=i.folder_id JOIN douyin_account a ON a.identity=f.identity WHERE v.platform='douyin' AND v.valid=1 AND v.should_download=1 AND p.pid=1 AND i.kind='video' AND i.present=1 AND i.qualified=1 AND f.identity=? AND f.selected=1 AND f.available=1 AND a.paused_reason IS NULL AND (a.next_allowed_at IS NULL OR a.next_allowed_at<=CAST(strftime('%s','now') AS INTEGER))";
+const ELIGIBLE_SQL: &str = "SELECT DISTINCT v.id,v.platform_id,v.path FROM video v JOIN page p ON p.video_id=v.id JOIN douyin_download d ON d.page_id=p.id JOIN douyin_folder_item i ON i.platform_id=v.platform_id JOIN douyin_folder f ON f.identity=i.identity AND f.id=i.folder_id JOIN douyin_account a ON a.identity=f.identity WHERE v.platform='douyin' AND v.valid=1 AND v.should_download=1 AND p.pid=1 AND i.kind='video' AND i.present=1 AND i.qualified=1 AND f.identity=? AND f.selected=1 AND f.available=1 AND a.paused_reason IS NULL AND (a.next_allowed_at IS NULL OR a.next_allowed_at<=CAST(strftime('%s','now') AS INTEGER))";
 
 pub async fn pending(db: &DatabaseConnection, identity: &str) -> Result<Vec<Pending>, DbErr> {
     db.query_all(statement(
@@ -367,6 +368,7 @@ pub async fn pending(db: &DatabaseConnection, identity: &str) -> Result<Vec<Pend
         Ok(Pending {
             id: row.try_get("", "id")?,
             platform_id: row.try_get("", "platform_id")?,
+            path: row.try_get("", "path")?,
         })
     })
     .collect()

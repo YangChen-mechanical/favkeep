@@ -71,7 +71,7 @@ cargo build --release --locked -p favkeep --bin favkeep
 
 ## 文件与恢复
 
-成品目录为 `<douyin.path>/<作品ID>/`，其中 `video.mp4` 供原播放器读取，`poster.jpg` 从本地视频提取；封面失败不阻止播放。沿用现有 Range、HEAD、观看进度及继续观看接口。
+成品目录为 `<douyin.path>/<标题> [<作品ID>]/`，其中 `video.mp4` 供原播放器读取，`poster.jpg` 从本地视频提取；封面失败不阻止播放。沿用现有 Range、HEAD、观看进度及继续观看接口。
 
 新配置可通过 `--media-root`／`FAVKEEP_MEDIA_ROOT` 将抖音与小红书媒体放到共同父目录下；已有路径与 B 站路径不变。部署示例见 [三平台媒体目录](../operations/media-paths.md)。
 

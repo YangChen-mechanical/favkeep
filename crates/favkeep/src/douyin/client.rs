@@ -122,20 +122,7 @@ impl Client {
         let payload = self
             .get("/aweme/v1/web/aweme/detail/", &[("aweme_id", id.to_owned())])
             .await?;
-        let detail = &payload["aweme_detail"];
-        if record_id(detail, "aweme_id").ok().as_deref() != Some(id) || unsupported(detail) {
-            return Err(Error::MediaUnavailable);
-        }
-        let urls = video_urls(&detail["video"]);
-        if urls.is_empty() {
-            return Err(Error::MediaUnavailable);
-        }
-        Ok(Video {
-            id: id.to_owned(),
-            title: detail["desc"].as_str().unwrap_or_default().to_owned(),
-            author: detail["author"]["nickname"].as_str().unwrap_or_default().to_owned(),
-            urls,
-        })
+        parse_video(&payload, id)
     }
 
     pub async fn media_response(&self, url: &str) -> Result<reqwest::Response> {
@@ -157,6 +144,23 @@ impl Client {
         }
         Err(Error::Rejected)
     }
+}
+
+fn parse_video(payload: &Value, id: &str) -> Result<Video> {
+    let detail = &payload["aweme_detail"];
+    if record_id(detail, "aweme_id").ok().as_deref() != Some(id) || unsupported(detail) {
+        return Err(Error::MediaUnavailable);
+    }
+    let urls = video_urls(&detail["video"]);
+    if urls.is_empty() {
+        return Err(Error::MediaUnavailable);
+    }
+    Ok(Video {
+        id: id.to_owned(),
+        title: detail["desc"].as_str().unwrap_or_default().to_owned(),
+        author: detail["author"]["nickname"].as_str().unwrap_or_default().to_owned(),
+        urls,
+    })
 }
 
 fn trusted_media_url(raw: &str) -> Option<reqwest::Url> {
@@ -493,5 +497,16 @@ mod tests {
             video_urls(&json!({"play_addr":{"url_list":["https://video.douyin.com/fallback"]}})),
             vec!["https://video.douyin.com/fallback"]
         );
+    }
+
+    #[tokio::test]
+    async fn detail_title_names_download_directory() {
+        let payload = json!({"aweme_detail": {
+            "aweme_id": "123456", "desc": "周末/露营",
+            "video": {"play_addr": {"url_list": ["https://video.douyin.com/fixture"]}}
+        }});
+        let detail = parse_video(&payload, "123456").unwrap();
+        assert_eq!(detail.title, "周末/露营");
+        crate::media_file::check_named_download(&detail.title, &detail.id, "周末_露营 [123456]").await;
     }
 }

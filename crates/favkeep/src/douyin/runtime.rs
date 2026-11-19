@@ -1,6 +1,6 @@
 #[cfg(test)]
 use crate::media_file::parse_media;
-use crate::media_file::{available_space, inspect, ready_part};
+use crate::media_file::{available_space, existing_directory, inspect, ready_part, record_directory};
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
@@ -287,7 +287,7 @@ async fn scan_and_download(
         }
         activity.stage("downloading", None, Some(&item.platform_id));
         info!("[抖音] 开始处理视频 {}", item.platform_id);
-        match save(&client, &item.platform_id, Path::new(&config.douyin.path)).await {
+        match save(db, &client, &item, Path::new(&config.douyin.path)).await {
             Ok((outcome, kind)) => {
                 activity.stage("registering", None, Some(&item.platform_id));
                 if let Err(error) = store::mark_outcome(db, item.id, outcome).await {
@@ -345,12 +345,21 @@ impl SaveKind {
     }
 }
 
-async fn save(client: &Client, id: &str, root: &Path) -> Result<(Outcome, SaveKind)> {
-    if !super::valid_id(id) || !root.is_absolute() {
-        return Err(Error::InvalidData);
-    }
-    let directory = root.join(id);
-    tokio::fs::create_dir_all(&directory).await.map_err(Error::from)?;
+async fn save(
+    db: &DatabaseConnection,
+    client: &Client,
+    item: &store::Pending,
+    root: &Path,
+) -> Result<(Outcome, SaveKind)> {
+    let id = &item.platform_id;
+    let (directory, details) = match existing_directory(root, id, &item.path)? {
+        Some(directory) => (directory, None),
+        None => {
+            let details = client.detail(id).await?;
+            let directory = record_directory(db, item.id, root, id, &details.title, &details.author).await?;
+            (directory, Some(details))
+        }
+    };
     private_dir(&directory)?;
     let final_path = directory.join("video.mp4");
     let part = directory.join("video.part");
@@ -374,7 +383,10 @@ async fn save(client: &Client, id: &str, root: &Path) -> Result<(Outcome, SaveKi
                 info
             }
             None => {
-                let details = client.detail(id).await?;
+                let details = match details {
+                    Some(details) => details,
+                    None => client.detail(id).await?,
+                };
                 title = details.title;
                 author = details.author;
                 crate::media_file::discard_partial(&part, &ready).await?;
