@@ -422,8 +422,12 @@ pub async fn detail(session: &Session, auth: &Auth, item: &Item) -> Result<Video
     html_challenge(&bytes)?;
     let state = initial_state(std::str::from_utf8(&bytes).map_err(|_| Error::InvalidData)?)
         .map_err(|_| Error::MediaUnavailable)?;
-    let note = &state["note"]["noteDetailMap"][&item.id]["note"];
-    if note["noteId"] != item.id && note["note_id"] != item.id {
+    parse_video(&state, &item.id)
+}
+
+fn parse_video(state: &Value, id: &str) -> Result<Video> {
+    let note = &state["note"]["noteDetailMap"][id]["note"];
+    if note["noteId"] != id && note["note_id"] != id {
         return Err(Error::InvalidData);
     }
     Ok(Video {
@@ -898,5 +902,16 @@ mod tests {
         assert_eq!(response_error(471), Some(Error::Challenge));
         assert_eq!(response_error(200), None);
         assert_eq!(response_error(500), None);
+    }
+
+    #[tokio::test]
+    async fn detail_title_names_download_directory() {
+        let state = json!({"note": {"noteDetailMap": {"abc123": {"note": {
+            "noteId": "abc123", "title": "冬日散步",
+            "video": {"media": {"stream": {"h264": [{"width": 640, "height": 360, "masterUrl": "https://sns-video-bd.xhscdn.com/fixture.mp4"}]}}}
+        }}}}});
+        let detail = parse_video(&state, "abc123").unwrap();
+        assert_eq!(detail.title, "冬日散步");
+        crate::media_file::check_named_download(&detail.title, "abc123", "冬日散步 [abc123]").await;
     }
 }

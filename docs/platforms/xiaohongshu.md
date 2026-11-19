@@ -6,7 +6,7 @@
 
 ## 使用
 
-媒体保存到 `<xiaohongshu.path>/<作品ID>/video.mp4`，本地封面为同目录的 `poster.jpg`。新配置支持 `--media-root`／`FAVKEEP_MEDIA_ROOT` 指定共同父目录；已有路径与 B 站路径不变，详见 [三平台媒体目录](../operations/media-paths.md)。
+媒体保存到 `<xiaohongshu.path>/<标题> [<作品ID>]/video.mp4`，本地封面为同目录的 `poster.jpg`。新配置支持 `--media-root`／`FAVKEEP_MEDIA_ROOT` 指定共同父目录；已有路径与 B 站路径不变，详见 [三平台媒体目录](../operations/media-paths.md)。
 
 在“小红书 → 连接账号”生成新的官方网页二维码，用手机扫描并确认。当前代码使用新的内存 HTTP 会话申请二维码，身份经官方本人接口核对后，才更新持久凭据。关闭弹窗、管理员退出、过期或异号不会替换旧凭据。首次未绑定账号时的拒绝也会记录冷却。
 

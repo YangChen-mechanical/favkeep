@@ -29,6 +29,7 @@ pub struct Source {
 pub struct Pending {
     pub id: i32,
     pub item: Item,
+    pub path: String,
 }
 #[derive(Debug, Default)]
 pub struct ScanSummary {
@@ -240,7 +241,7 @@ pub async fn commit_scan(
     tx.commit().await?;
     Ok(summary)
 }
-const ELIGIBLE_SQL: &str = "SELECT v.id,i.platform_id,i.kind,i.token FROM video v JOIN page p ON p.video_id=v.id JOIN xiaohongshu_download d ON d.page_id=p.id JOIN xiaohongshu_seen i ON i.platform_id=v.platform_id JOIN xiaohongshu_account a ON a.identity=i.identity JOIN xiaohongshu_source s ON s.account_id=a.id WHERE v.platform='xiaohongshu' AND v.valid=1 AND v.should_download=1 AND p.pid=1 AND i.kind='video' AND i.qualified=1 AND a.identity=? AND s.enabled=1 AND a.paused_reason IS NULL AND (a.next_allowed_at IS NULL OR a.next_allowed_at<=CAST(strftime('%s','now') AS INTEGER))";
+const ELIGIBLE_SQL: &str = "SELECT v.id,i.platform_id,i.kind,i.token,v.path FROM video v JOIN page p ON p.video_id=v.id JOIN xiaohongshu_download d ON d.page_id=p.id JOIN xiaohongshu_seen i ON i.platform_id=v.platform_id JOIN xiaohongshu_account a ON a.identity=i.identity JOIN xiaohongshu_source s ON s.account_id=a.id WHERE v.platform='xiaohongshu' AND v.valid=1 AND v.should_download=1 AND p.pid=1 AND i.kind='video' AND i.qualified=1 AND a.identity=? AND s.enabled=1 AND a.paused_reason IS NULL AND (a.next_allowed_at IS NULL OR a.next_allowed_at<=CAST(strftime('%s','now') AS INTEGER))";
 pub async fn pending(db: &DatabaseConnection, identity: &str) -> Result<Vec<Pending>, DbErr> {
     db.query_all(statement(
         &format!("{ELIGIBLE_SQL} AND d.state!='succeeded' AND d.failures<4 ORDER BY v.id"),
@@ -251,6 +252,7 @@ pub async fn pending(db: &DatabaseConnection, identity: &str) -> Result<Vec<Pend
     .map(|r| {
         Ok(Pending {
             id: r.try_get("", "id")?,
+            path: r.try_get("", "path")?,
             item: Item {
                 id: r.try_get("", "platform_id")?,
                 kind: r.try_get("", "kind")?,

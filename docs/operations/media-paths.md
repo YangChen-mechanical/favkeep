@@ -7,10 +7,10 @@
 ├── config/                        # 数据库、管理员、会话与平台凭据
 └── media/
     ├── bilibili/                  # 路径由 B 站来源配置指定
-    ├── douyin/<作品ID>/
+    ├── douyin/<标题> [<作品ID>]/
     │   ├── video.mp4
     │   └── poster.jpg
-    └── xiaohongshu/<作品ID>/
+    └── xiaohongshu/<标题> [<作品ID>]/
         ├── video.mp4
         └── poster.jpg
 ```

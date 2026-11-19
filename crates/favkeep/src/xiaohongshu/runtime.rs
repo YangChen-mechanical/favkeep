@@ -1,6 +1,6 @@
 use super::{
     Error, RUNNING, Result,
-    client::{self, Auth, Item, Session},
+    client::{self, Auth, Session},
     progress,
     store::{self, AccountOutcome, Outcome},
 };
@@ -89,10 +89,9 @@ pub async fn run(db: &DatabaseConnection, config: &Config) -> Result<()> {
                 match save(
                     db,
                     &identity,
-                    item.id,
                     &session,
                     &fresh,
-                    &item.item,
+                    &item,
                     Path::new(&config.xiaohongshu.path),
                 )
                 .await
@@ -198,16 +197,31 @@ async fn inspect(path: &Path) -> Result<media_file::MediaInfo> {
 async fn save(
     db: &DatabaseConnection,
     identity: &str,
-    video_id: i32,
     session: &Session,
     auth: &Auth,
-    item: &Item,
+    pending: &store::Pending,
     root: &Path,
 ) -> Result<(Outcome, SaveKind)> {
-    if !super::valid_id(&item.id) || !root.is_absolute() {
-        return Err(Error::InvalidData);
-    }
-    let dir = root.join(&item.id);
+    let item = &pending.item;
+    let fetch_detail = async || match client::detail(session, auth, item).await {
+        Ok(detail) => Ok(detail),
+        Err(error @ (Error::Rejected | Error::LoginExpired | Error::Challenge)) => Err(error),
+        Err(error) => {
+            // A missing detail can mean a removed note or an expired account; confirm self before retrying it.
+            let fresh = client::authenticate(session, Some(auth), Some(identity), None).await?;
+            write_private(&super::login::root().join("auth.json"), &fresh)?;
+            Err(error)
+        }
+    };
+    let (dir, detail) = match media_file::existing_directory(root, &item.id, &pending.path)? {
+        Some(dir) => (dir, None),
+        None => {
+            let detail = fetch_detail().await?;
+            let dir =
+                media_file::record_directory(db, pending.id, root, &item.id, &detail.title, &detail.author).await?;
+            (dir, Some(detail))
+        }
+    };
     private_dir(&dir)?;
     let final_path = dir.join("video.mp4");
     let part = dir.join("video.part");
@@ -226,15 +240,9 @@ async fn save(
         if recovered.is_some() {
             kind = SaveKind::Recovered;
         } else {
-            let detail = match client::detail(session, auth, item).await {
-                Ok(detail) => detail,
-                Err(error @ (Error::Rejected | Error::LoginExpired | Error::Challenge)) => return Err(error),
-                Err(error) => {
-                    // A missing detail can mean a removed note or an expired account; confirm self before retrying it.
-                    let fresh = client::authenticate(session, Some(auth), Some(identity), None).await?;
-                    write_private(&super::login::root().join("auth.json"), &fresh)?;
-                    return Err(error);
-                }
+            let detail = match detail {
+                Some(detail) => detail,
+                None => fetch_detail().await?,
             };
             title = detail.title;
             author = detail.author;
@@ -271,7 +279,7 @@ async fn save(
                 &serde_json::json!({"bytes":tokio::fs::metadata(&part).await.map_err(Error::from)?.len()}),
             )?;
         }
-        if !store::is_pending(db, identity, video_id).await.map_err(database)? {
+        if !store::is_pending(db, identity, pending.id).await.map_err(database)? {
             return Err(Error::SelectionChanged);
         }
         media_file::publish(&part, &ready, &final_path).await?;
