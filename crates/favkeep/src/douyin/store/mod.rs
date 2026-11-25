@@ -266,9 +266,6 @@ pub async fn commit_scan(
         .await?
         .ok_or_else(conflict)?,
     )?;
-    if folder.total.is_some_and(|total| total != items.len() as i64) {
-        return Err(invalid());
-    }
     txn.execute(statement(
         "UPDATE douyin_folder_item SET present=0 WHERE identity=? AND folder_id=?",
         vec![identity.into(), folder_id.into()],

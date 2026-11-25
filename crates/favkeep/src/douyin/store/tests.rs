@@ -589,7 +589,48 @@ async fn manual_retry_resets_only_eligible_failed_content_and_honors_account_blo
 }
 
 #[tokio::test]
-async fn known_counts_and_duplicate_ids_cannot_commit_partial_baselines() {
+async fn visible_snapshots_preserve_history_when_platform_counts_include_hidden_items() {
+    let db = database().await;
+    sync_folders(
+        &db,
+        "self_123",
+        &[Folder { id: "f1".into(), name: "First".into(), total: Some(17) }],
+    ).await.unwrap();
+    let folder = set_selected(&db, "self_123", "f1", true).await.unwrap();
+    let mut visible: Vec<Item> = (1..=16).map(|id| item(&id.to_string())).collect();
+    let baseline = commit_scan(&db, "self_123", "f1", folder.revision, &visible)
+        .await.unwrap();
+    assert_eq!(baseline.scanned, 16);
+    assert_eq!(baseline.inserted, 0);
+    assert!(pending(&db, "self_123").await.unwrap().is_empty());
+    let baseline_at = folders(&db, "self_123").await.unwrap()[0].baseline_at;
+
+    visible.push(item("new"));
+    assert_eq!(
+        commit_scan(&db, "self_123", "f1", folder.revision, &visible).await.unwrap().inserted,
+        1
+    );
+    let queued = pending(&db, "self_123").await.unwrap();
+    assert_eq!(queued.len(), 1);
+    commit_scan(&db, "self_123", "f1", folder.revision, &[])
+        .await.unwrap();
+    let hidden = db.query_one(statement("SELECT present,qualified FROM douyin_folder_item WHERE folder_id='f1' AND platform_id='new'", vec![])).await.unwrap().unwrap();
+    assert!(!hidden.try_get::<bool>("", "present").unwrap());
+    assert!(hidden.try_get::<bool>("", "qualified").unwrap());
+    assert!(pending(&db, "self_123").await.unwrap().is_empty());
+    assert_eq!(saved_page(&db, queued[0].id).await.video_id, queued[0].id);
+    assert_eq!(
+        commit_scan(&db, "self_123", "f1", folder.revision, &visible).await.unwrap().inserted,
+        0
+    );
+    let restored = pending(&db, "self_123").await.unwrap();
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].id, queued[0].id);
+    assert_eq!(folders(&db, "self_123").await.unwrap()[0].baseline_at, baseline_at);
+}
+
+#[tokio::test]
+async fn duplicate_ids_cannot_commit_partial_baselines() {
     let db = database().await;
     sync_folders(
         &db,
@@ -603,11 +644,6 @@ async fn known_counts_and_duplicate_ids_cannot_commit_partial_baselines() {
     .await
     .unwrap();
     let folder = set_selected(&db, "self_123", "f1", true).await.unwrap();
-    assert!(
-        commit_scan(&db, "self_123", "f1", folder.revision, &[item("one")])
-            .await
-            .is_err()
-    );
     assert!(
         commit_scan(&db, "self_123", "f1", folder.revision, &[item("one"), item("one")])
             .await

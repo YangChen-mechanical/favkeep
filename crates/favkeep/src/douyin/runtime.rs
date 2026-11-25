@@ -249,6 +249,14 @@ async fn scan_and_download(
             }
         };
         activity.scanned(&committed);
+        if let Some(total) = folder.total
+            && total != committed.scanned as i64
+        {
+            info!(
+                "[抖音] 收藏夹 {:?} 平台计数 {}，本次可见 {}，已完成可见作品扫描",
+                folder.name, total, committed.scanned
+            );
+        }
         info!(
             "[抖音] 收藏夹 {:?} 扫描已提交：扫描 {}，历史跳过 {}，已有 {}，不支持 {}，新增入库 {}",
             folder.name,
@@ -264,7 +272,7 @@ async fn scan_and_download(
                 folder.name
             );
         } else if committed.scanned == 0 {
-            info!("[抖音] 收藏夹 {:?} 为空，没有新增视频", folder.name);
+            info!("[抖音] 收藏夹 {:?} 本次未返回可见作品，没有新增视频", folder.name);
         } else if committed.inserted == 0 {
             info!(
                 "[抖音] 收藏夹 {:?} 没有新增入库视频：条目属于历史、已有或不支持类型",

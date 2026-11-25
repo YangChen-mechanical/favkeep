@@ -73,9 +73,9 @@ impl Client {
                 params.push(("collects_id", folder.id.clone()));
             }
             let payload = self.get(path, &params).await?;
-            let done = scan.push(&payload, key, folder.is_some_and(|f| f.total == Some(0)))?;
+            let done = scan.push(&payload, key)?;
             if done {
-                return scan.finish(folder.and_then(|f| f.total));
+                return scan.finish();
             }
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
@@ -183,7 +183,7 @@ fn business_status(payload: &Value) -> Result<()> {
     }
 }
 
-pub fn page_data(payload: &Value, cursor: u64, key: &str, verified_empty: bool) -> Result<(Vec<Value>, bool, u64)> {
+pub fn page_data(payload: &Value, cursor: u64, key: &str) -> Result<(Vec<Value>, bool, u64)> {
     business_status(payload)?;
     let more = match payload.get("has_more") {
         Some(Value::Bool(more)) => *more,
@@ -197,10 +197,10 @@ pub fn page_data(payload: &Value, cursor: u64, key: &str, verified_empty: bool) 
         .ok_or(Error::InvalidData)?;
     let rows = match payload.get(key) {
         Some(Value::Array(rows)) => rows.clone(),
-        Some(Value::Null) if verified_empty && !more => vec![],
+        Some(Value::Null) if key == "aweme_list" => vec![],
         _ => return Err(Error::InvalidData),
     };
-    if more && (next <= cursor || rows.is_empty()) {
+    if more && (next <= cursor || (key != "aweme_list" && rows.is_empty())) {
         return Err(Error::Incomplete);
     }
     Ok((rows, more, next))
@@ -215,19 +215,15 @@ struct Scan {
 }
 
 impl Scan {
-    fn finish(self, total: Option<u64>) -> Result<Vec<Value>> {
-        if [total, self.reported_total]
-            .into_iter()
-            .flatten()
-            .any(|total| total != self.items.len() as u64)
-        {
+    fn finish(self) -> Result<Vec<Value>> {
+        if self.reported_total.is_some_and(|total| total != self.items.len() as u64) {
             return Err(Error::Incomplete);
         }
         Ok(self.items)
     }
 
-    fn push(&mut self, payload: &Value, key: &str, verified_empty: bool) -> Result<bool> {
-        let (rows, more, next) = page_data(payload, self.cursor, key, verified_empty)?;
+    fn push(&mut self, payload: &Value, key: &str) -> Result<bool> {
+        let (rows, more, next) = page_data(payload, self.cursor, key)?;
         if key == "collects_list"
             && let Some(value) = payload.get("total_number")
         {
@@ -272,10 +268,10 @@ mod tests {
     #[test]
     fn page_requires_business_success_and_a_real_terminal_signal() {
         let page = json!({"status_code":0,"aweme_list":[{"aweme_id":"12"}],"has_more":0,"cursor":10});
-        assert_eq!(page_data(&page, 0, "aweme_list", false).unwrap().0.len(), 1);
-        assert!(page_data(&json!({"status_code":0,"aweme_list":[]}), 0, "aweme_list", false).is_err());
+        assert_eq!(page_data(&page, 0, "aweme_list").unwrap().0.len(), 1);
+        assert!(page_data(&json!({"status_code":0,"aweme_list":[]}), 0, "aweme_list").is_err());
         assert_eq!(
-            page_data(&json!({"status_code":8}), 0, "aweme_list", false),
+            page_data(&json!({"status_code":8}), 0, "aweme_list"),
             Err(Error::Rejected)
         );
     }
@@ -328,12 +324,39 @@ mod tests {
     }
 
     #[test]
-    fn stalled_cursor_or_unproven_empty_is_not_a_complete_scan() {
+    fn stalled_cursors_and_empty_folder_pages_are_not_complete_scans() {
         let page = json!({"status_code":0,"aweme_list":[{"aweme_id":"12"}],"has_more":1,"cursor":0});
-        assert_eq!(page_data(&page, 0, "aweme_list", false), Err(Error::Incomplete));
-        let empty = json!({"status_code":0,"aweme_list":null,"has_more":0,"cursor":0});
-        assert!(page_data(&empty, 0, "aweme_list", false).is_err());
-        assert!(page_data(&empty, 0, "aweme_list", true).unwrap().0.is_empty());
+        assert_eq!(page_data(&page, 0, "aweme_list"), Err(Error::Incomplete));
+        for rows in [json!(null), json!([])] {
+            let empty = json!({"status_code":0,"collects_list":rows,"has_more":1,"cursor":1});
+            assert!(page_data(&empty, 0, "collects_list").is_err());
+        }
+    }
+
+    #[test]
+    fn invisible_slots_do_not_truncate_a_visible_scan() {
+        for empty in [json!(null), json!([])] {
+            let mut scan = Scan::default();
+            assert!(
+                !scan.push(
+                    &json!({"status_code":0,"aweme_list":empty,"has_more":1,"cursor":7}),
+                    "aweme_list",
+                ).unwrap()
+            );
+            assert!(
+                scan.push(
+                    &json!({"status_code":0,"aweme_list":[{"aweme_id":"visible"}],"has_more":0,"cursor":0}),
+                    "aweme_list",
+                ).unwrap()
+            );
+            assert_eq!(scan.finish().unwrap().len(), 1);
+        }
+        let mut scan = Scan::default();
+        assert!(scan.push(
+            &json!({"status_code":0,"aweme_list":null,"has_more":0,"cursor":0}),
+            "aweme_list",
+        ).unwrap());
+        assert!(scan.finish().unwrap().is_empty());
     }
 
     #[test]
@@ -346,14 +369,13 @@ mod tests {
     }
 
     #[test]
-    fn pages_deduplicate_overlap_and_check_the_unique_folder_total() {
+    fn pages_deduplicate_overlapping_visible_items() {
         let mut scan = Scan::default();
         assert!(
             !scan
                 .push(
                     &json!({"status_code":0,"aweme_list":[{"aweme_id":"1"},{"aweme_id":"2"}],"has_more":1,"cursor":20}),
                     "aweme_list",
-                    false
                 )
                 .unwrap()
         );
@@ -361,22 +383,10 @@ mod tests {
             scan.push(
                 &json!({"status_code":0,"aweme_list":[{"aweme_id":"2"},{"aweme_id":"3"}],"has_more":0,"cursor":20}),
                 "aweme_list",
-                false
             )
             .unwrap()
         );
-        assert_eq!(scan.finish(Some(3)).unwrap().len(), 3);
-
-        let mut truncated = Scan::default();
-        truncated
-            .push(
-                &json!({"status_code":0,"aweme_list":[{"aweme_id":"1"}],"has_more":0,"cursor":0}),
-                "aweme_list",
-                false,
-            )
-            .unwrap();
-        assert_eq!(truncated.finish(Some(2)), Err(Error::Incomplete));
-        assert!(Scan::default().finish(Some(0)).unwrap().is_empty());
+        assert_eq!(scan.finish().unwrap().len(), 3);
     }
 
     #[test]
@@ -385,16 +395,16 @@ mod tests {
             json!({"status_code":0,"collects_list":[{"collects_id":"1"}],"has_more":1,"cursor":20,"total_number":3});
         let last = json!({"status_code":0,"collects_list":[{"collects_id":"2"}],"has_more":0,"cursor":20});
         let mut scan = Scan::default();
-        assert!(!scan.push(&first, "collects_list", false).unwrap());
-        assert!(scan.push(&last, "collects_list", false).unwrap());
-        assert_eq!(scan.finish(None), Err(Error::Incomplete));
+        assert!(!scan.push(&first, "collects_list").unwrap());
+        assert!(scan.push(&last, "collects_list").unwrap());
+        assert_eq!(scan.finish(), Err(Error::Incomplete));
 
         let mut scan = Scan::default();
         let mut complete_first = first.clone();
         complete_first["total_number"] = json!(2);
-        scan.push(&complete_first, "collects_list", false).unwrap();
-        scan.push(&last, "collects_list", false).unwrap();
-        assert_eq!(scan.finish(None).unwrap().len(), 2);
+        scan.push(&complete_first, "collects_list").unwrap();
+        scan.push(&last, "collects_list").unwrap();
+        assert_eq!(scan.finish().unwrap().len(), 2);
     }
 
     #[test]
@@ -402,7 +412,7 @@ mod tests {
         for total in [json!(null), json!("1"), json!(-1), json!(1.5), json!(true)] {
             let page = json!({"status_code":0,"collects_list":[{"collects_id":"1"}],"has_more":0,"cursor":0,"total_number":total});
             assert_eq!(
-                Scan::default().push(&page, "collects_list", false),
+                Scan::default().push(&page, "collects_list"),
                 Err(Error::InvalidData)
             );
         }
@@ -410,10 +420,9 @@ mod tests {
         scan.push(
             &json!({"status_code":0,"collects_list":[{"collects_id":"1"}],"has_more":1,"cursor":20,"total_number":2}),
             "collects_list",
-            false,
         )
         .unwrap();
-        assert_eq!(scan.push(&json!({"status_code":0,"collects_list":[{"collects_id":"2"}],"has_more":0,"cursor":20,"total_number":3}), "collects_list", false), Err(Error::Incomplete));
+        assert_eq!(scan.push(&json!({"status_code":0,"collects_list":[{"collects_id":"2"}],"has_more":0,"cursor":20,"total_number":3}), "collects_list"), Err(Error::Incomplete));
     }
 
     #[test]
@@ -436,32 +445,32 @@ mod tests {
             scan.push(
                 &json!({"status_code":0,"aweme_list":[{"aweme_id":"1"}],"has_more":1,"cursor":20}),
                 "aweme_list",
-                false,
             )
             .unwrap();
             assert_eq!(
                 scan.push(
                     &json!({"status_code":0,"aweme_list":[{"aweme_id":"1"}],"has_more":more,"cursor":40}),
                     "aweme_list",
-                    false
                 ),
                 Err(Error::Incomplete)
             );
         }
         let backwards = json!({"status_code":0,"aweme_list":[{"aweme_id":"2"}],"has_more":1,"cursor":10});
-        assert_eq!(page_data(&backwards, 20, "aweme_list", false), Err(Error::Incomplete));
+        assert_eq!(page_data(&backwards, 20, "aweme_list"), Err(Error::Incomplete));
     }
 
     #[test]
     fn malformed_signals_and_ids_never_finish_a_scan() {
         for page in [
+            json!({"status_code":0,"has_more":0,"cursor":0}),
+            json!({"status_code":0,"aweme_list":{},"has_more":0,"cursor":0}),
             json!({"status_code":"0","aweme_list":[],"has_more":0,"cursor":0}),
             json!({"status_code":0,"aweme_list":[],"has_more":"0","cursor":0}),
             json!({"status_code":0,"aweme_list":[],"has_more":2,"cursor":0}),
             json!({"status_code":0,"aweme_list":[],"has_more":0,"cursor":-1}),
             json!({"status_code":0,"aweme_list":[{"aweme_id":"../secret"}],"has_more":0,"cursor":0}),
         ] {
-            assert!(Scan::default().push(&page, "aweme_list", false).is_err());
+            assert!(Scan::default().push(&page, "aweme_list").is_err());
         }
     }
 
