@@ -21,6 +21,20 @@ const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (
 const ME: &str = "/api/sns/web/v2/user/me";
 const MAX_BODY: usize = 8 * 1024 * 1024;
 
+#[derive(Clone, Copy, Debug)]
+pub enum IdentityStage {
+    SyncStart,
+    ScanRecheck,
+    DetailRecheck,
+    Login,
+    LoginRecheck,
+    Resume,
+}
+
+pub fn report_auth_error(stage: IdentityStage, error: &Error) {
+    warn!(stage = ?stage, reason = %error, "[小红书] 账号验证失败");
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Auth {
     pub identity: String,
@@ -293,6 +307,21 @@ pub async fn authenticate(
     saved: Option<&Auth>,
     expected: Option<&str>,
     qr: Option<&tokio::sync::watch::Sender<Option<String>>>,
+    stage: IdentityStage,
+) -> Result<Auth> {
+    let result = authenticate_inner(session, saved, expected, qr, stage).await;
+    if let Err(error) = &result {
+        report_auth_error(stage, error);
+    }
+    result
+}
+
+async fn authenticate_inner(
+    session: &Session,
+    saved: Option<&Auth>,
+    expected: Option<&str>,
+    qr: Option<&tokio::sync::watch::Sender<Option<String>>>,
+    stage: IdentityStage,
 ) -> Result<Auth> {
     let expected = expected.or(saved.map(|a| a.identity.as_str()));
     if let Some(qr) = qr {
@@ -345,8 +374,13 @@ pub async fn authenticate(
                         )?;
                     }
                     let me = session.api(ME, None).await?;
-                    let id =
-                        checked_identity(&format!("{}{ME}", session.api), &me, expected, info["user_id"].as_str())?;
+                    let id = checked_identity(
+                        &format!("{}{ME}", session.api),
+                        &me,
+                        expected,
+                        info["user_id"].as_str(),
+                        stage,
+                    )?;
                     return session.export(id);
                 }
                 _ => return Err(Error::LoginExpired),
@@ -355,7 +389,7 @@ pub async fn authenticate(
         return Err(Error::LoginExpired);
     }
     let value = session.api(ME, None).await?;
-    let id = checked_identity(&format!("{}{ME}", session.api), &value, expected, None)?;
+    let id = checked_identity(&format!("{}{ME}", session.api), &value, expected, None, stage)?;
     session.export(id)
 }
 
@@ -466,30 +500,76 @@ fn navigation_matches(actual: &Url, target: &Url) -> bool {
                 .is_some_and(|id| valid_id(id) && actual.path() == format!("/discovery/item/{id}")))
 }
 
-fn identity(url: &str, body: &Value) -> Option<String> {
-    let url = trusted_api(url).ok()?;
-    if !["/api/sns/web/v1/user/self", "/api/sns/web/v2/user/me"].contains(&url.path().trim_end_matches('/'))
-        || body["success"] != true
-        || body["code"].as_i64() != Some(0)
-        || body["data"]["guest"] != false
-    {
-        return None;
+fn identity(url: &str, body: &Value) -> std::result::Result<String, &'static str> {
+    let url = trusted_api(url).map_err(|_| "invalid_self_endpoint")?;
+    if !["/api/sns/web/v1/user/self", "/api/sns/web/v2/user/me"].contains(&url.path().trim_end_matches('/')) {
+        return Err("invalid_self_endpoint");
+    }
+    if body["success"] != true || body["code"].as_i64() != Some(0) {
+        return Err("response_not_successful");
+    }
+    match body["data"].get("guest") {
+        None => return Err("guest_missing"),
+        Some(Value::Bool(false)) => {}
+        Some(Value::Bool(true)) => return Err("guest_session"),
+        Some(_) => return Err("guest_type_invalid"),
     }
     let id = body["data"]["user_id"]
         .as_str()
-        .or_else(|| body["data"]["id"].as_str())?;
-    (valid_id(id) && id != "0").then(|| id.to_owned())
+        .or_else(|| body["data"]["id"].as_str())
+        .ok_or(if body["data"].get("user_id").is_none() && body["data"].get("id").is_none() {
+            "user_id_missing"
+        } else {
+            "user_id_type_invalid"
+        })?;
+    if !valid_id(id) || id == "0" {
+        return Err("user_id_invalid");
+    }
+    Ok(id.to_owned())
 }
 
-fn checked_identity(url: &str, body: &Value, expected: Option<&str>, qr_user: Option<&str>) -> Result<String> {
-    if body["data"]["guest"] == true {
-        return Err(Error::LoginExpired);
+fn field_type(value: Option<&Value>) -> &'static str {
+    match value {
+        None => "missing",
+        Some(Value::Null) => "null",
+        Some(Value::Bool(_)) => "boolean",
+        Some(Value::Number(_)) => "number",
+        Some(Value::String(_)) => "string",
+        Some(Value::Array(_)) => "array",
+        Some(Value::Object(_)) => "object",
     }
-    let id = identity(url, body).ok_or(Error::IdentityUnverified)?;
-    if [expected, qr_user].into_iter().flatten().any(|value| value != id) {
-        return Err(Error::AccountChanged);
-    }
-    Ok(id)
+}
+
+fn checked_identity(
+    url: &str,
+    body: &Value,
+    expected: Option<&str>,
+    qr_user: Option<&str>,
+    stage: IdentityStage,
+) -> Result<String> {
+    let result = (|| {
+        if body["data"]["guest"] == true {
+            return Err((Error::LoginExpired, "guest_session"));
+        }
+        let id = identity(url, body).map_err(|reason| (Error::IdentityUnverified, reason))?;
+        if [expected, qr_user].into_iter().flatten().any(|value| value != id) {
+            return Err((Error::AccountChanged, "account_mismatch"));
+        }
+        Ok(id)
+    })();
+    result.map_err(|(error, reason)| {
+        warn!(
+            stage = ?stage,
+            reason,
+            error = %error,
+            data_type = field_type(body.get("data")),
+            guest_type = field_type(body["data"].get("guest")),
+            user_id_type = field_type(body["data"].get("user_id")),
+            id_type = field_type(body["data"].get("id")),
+            "[小红书] 身份响应校验失败"
+        );
+        error
+    })
 }
 
 fn response_error(status: i64) -> Option<Error> {
@@ -712,19 +792,19 @@ mod tests {
         let url = "https://webapi.rednote.com/api/sns/web/v2/user/me";
         let body = json!({"success":true,"code":0,"data":{"guest":false,"user_id":"self123"}});
         assert_eq!(
-            checked_identity(url, &body, Some("other"), None),
+            checked_identity(url, &body, Some("other"), None, IdentityStage::Login),
             Err(Error::AccountChanged)
         );
         assert_eq!(
-            checked_identity(url, &body, None, Some("other")),
+            checked_identity(url, &body, None, Some("other"), IdentityStage::Login),
             Err(Error::AccountChanged)
         );
         assert_eq!(
-            checked_identity(url, &body, Some("self123"), Some("self123")).unwrap(),
+            checked_identity(url, &body, Some("self123"), Some("self123"), IdentityStage::Login).unwrap(),
             "self123"
         );
         let guest = json!({"success":true,"code":0,"data":{"guest":true}});
-        assert_eq!(checked_identity(url, &guest, None, None), Err(Error::LoginExpired));
+        assert_eq!(checked_identity(url, &guest, None, None, IdentityStage::Login), Err(Error::LoginExpired));
         assert_eq!(
             business_status(&json!({"success":false,"code":-100})),
             Err(Error::LoginExpired)
@@ -745,7 +825,7 @@ mod tests {
         let data = json!({"success":true,"code":0,"data":{"guest":false,"user_id":"self123"}});
         assert_eq!(
             identity("https://webapi.rednote.com/api/sns/web/v2/user/me", &data).as_deref(),
-            Some("self123")
+            Ok("self123")
         );
         for url in [
             "https://webapi.rednote.com.evil.test/api/sns/web/v2/user/me",
@@ -753,11 +833,130 @@ mod tests {
             "https://webapi.rednote.com:444/api/sns/web/v2/user/me",
             "https://webapi.rednote.com/api/sns/web/v1/user/other",
         ] {
-            assert!(identity(url, &data).is_none());
+            assert!(identity(url, &data).is_err());
         }
         let mut guest = data;
         guest["data"]["guest"] = json!(true);
-        assert!(identity("https://webapi.rednote.com/api/sns/web/v2/user/me", &guest).is_none());
+        assert!(identity("https://webapi.rednote.com/api/sns/web/v2/user/me", &guest).is_err());
+    }
+
+    #[test]
+    fn identity_failure_diagnostics_are_specific_and_redacted() {
+        use std::collections::VecDeque;
+        let (sender, _) = tokio::sync::broadcast::channel(16);
+        let history = Arc::new(parking_lot::RwLock::new(VecDeque::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .flatten_event(true)
+            .with_ansi(false)
+            .with_writer(crate::api::LogHelper::new(sender, history.clone()))
+            .finish();
+        let url = "https://webapi.rednote.com/api/sns/web/v2/user/me";
+        let cases = [
+            (Value::Null, "guest_missing", Error::IdentityUnverified),
+            (json!([]), "guest_missing", Error::IdentityUnverified),
+            (json!({"user_id":"secret-account"}), "guest_missing", Error::IdentityUnverified),
+            (json!({"guest":null}), "guest_type_invalid", Error::IdentityUnverified),
+            (json!({"guest":"false"}), "guest_type_invalid", Error::IdentityUnverified),
+            (json!({"guest":0}), "guest_type_invalid", Error::IdentityUnverified),
+            (json!({"guest":true}), "guest_session", Error::LoginExpired),
+            (json!({"guest":false}), "user_id_missing", Error::IdentityUnverified),
+            (json!({"guest":false,"user_id":null}), "user_id_type_invalid", Error::IdentityUnverified),
+            (json!({"guest":false,"user_id":42}), "user_id_type_invalid", Error::IdentityUnverified),
+            (json!({"guest":false,"user_id":[]}), "user_id_type_invalid", Error::IdentityUnverified),
+            (json!({"guest":false,"user_id":{}}), "user_id_type_invalid", Error::IdentityUnverified),
+            (json!({"guest":false,"user_id":""}), "user_id_invalid", Error::IdentityUnverified),
+            (json!({"guest":false,"user_id":"0"}), "user_id_invalid", Error::IdentityUnverified),
+            (json!({"guest":false,"user_id":"bad/id"}), "user_id_invalid", Error::IdentityUnverified),
+            (json!({"guest":false,"user_id":"x".repeat(129)}), "user_id_invalid", Error::IdentityUnverified),
+            (json!({"guest":false,"user_id":"other-secret-account"}), "account_mismatch", Error::AccountChanged),
+        ];
+        tracing::subscriber::with_default(subscriber, || {
+            for (data, reason, error) in &cases {
+                let body = json!({"success":true,"code":0,"data":data,
+                    "cookie":"secret-cookie","signature":"secret-signature","qrcode":"secret-qrcode"});
+                assert_eq!(
+                    checked_identity(url, &body, Some("secret-account"), None, IdentityStage::ScanRecheck),
+                    Err(error.clone()),
+                );
+                let history = history.read();
+                let event: Value = serde_json::from_str(history.back().unwrap()).unwrap();
+                assert_eq!(event["reason"], *reason);
+                assert_eq!(event["error"], error.to_string());
+                assert_eq!(event["stage"], "ScanRecheck");
+                assert_eq!(event["data_type"], field_type(Some(data)));
+                assert_eq!(event["guest_type"], field_type(data.get("guest")));
+                assert_eq!(event["user_id_type"], field_type(data.get("user_id")));
+                assert_eq!(event["id_type"], "missing");
+            }
+            let good = json!({"success":true,"code":0,"data":{"guest":false,"user_id":"secret-account"}});
+            let count = history.read().len();
+            assert_eq!(
+                checked_identity(url, &good, Some("secret-account"), None, IdentityStage::SyncStart),
+                Ok("secret-account".into())
+            );
+            assert_eq!(history.read().len(), count);
+            let alias = json!({"success":true,"code":0,"data":{"guest":false,"user_id":42,"id":"secret-account"}});
+            assert_eq!(
+                checked_identity(url, &alias, Some("secret-account"), None, IdentityStage::SyncStart),
+                Ok("secret-account".into())
+            );
+            let invalid_primary =
+                json!({"success":true,"code":0,"data":{"guest":false,"user_id":"","id":"secret-account"}});
+            assert_eq!(identity(url, &invalid_primary), Err("user_id_invalid"));
+            assert_eq!(
+                identity("https://untrusted.test/api/sns/web/v2/user/me", &good),
+                Err("invalid_self_endpoint")
+            );
+            let unsuccessful = json!({"success":false,"code":0,"data":{"guest":false,"user_id":"secret-account"}});
+            assert_eq!(identity(url, &unsuccessful), Err("response_not_successful"));
+            for stage in [
+                IdentityStage::SyncStart,
+                IdentityStage::ScanRecheck,
+                IdentityStage::DetailRecheck,
+                IdentityStage::Login,
+                IdentityStage::LoginRecheck,
+                IdentityStage::Resume,
+            ] {
+                report_auth_error(stage, &Error::LoginExpired);
+                let history = history.read();
+                let event: Value = serde_json::from_str(history.back().unwrap()).unwrap();
+                assert_eq!(event["stage"], format!("{stage:?}"));
+                assert_eq!(event["reason"], "login_expired");
+            }
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let _ = rustls::crypto::ring::default_provider().install_default();
+                    let session = Session::new(None).unwrap();
+                    // No a1 cookie: authentication fails before any HTTP request.
+                    assert!(matches!(
+                        authenticate(&session, None, None, None, IdentityStage::Resume).await,
+                        Err(Error::LoginExpired)
+                    ));
+                });
+            let history = history.read();
+            let event: Value = serde_json::from_str(history.back().unwrap()).unwrap();
+            assert_eq!(event["stage"], "Resume");
+            assert_eq!(event["reason"], "login_expired");
+        });
+        let history = history.read();
+        assert_eq!(history.len(), cases.len() + 7);
+        for line in history.iter() {
+            for secret in [
+                "secret-account",
+                "other-secret-account",
+                "secret-cookie",
+                "secret-signature",
+                "secret-qrcode",
+                "bad/id",
+                "https://",
+            ] {
+                assert!(!line.contains(secret), "diagnostic leaked a response value");
+            }
+        }
     }
 
     #[test]

@@ -144,12 +144,19 @@ async fn connect(
             .await
             .map_err(|_| Error::File)?
             .and_then(|a| a.identity),
-    )?;
+    )
+    .inspect_err(|error| client::report_auth_error(client::IdentityStage::Login, error))?;
     activity.stage("qr_preparing", None, None);
     let session = client::Session::new(None)?;
     let (result, platform) = {
         let (qr_tx, mut qr_rx) = watch::channel(None);
-        let authentication = client::authenticate(&session, saved.as_ref(), expected.as_deref(), Some(&qr_tx));
+        let authentication = client::authenticate(
+            &session,
+            saved.as_ref(),
+            expected.as_deref(),
+            Some(&qr_tx),
+            client::IdentityStage::Login,
+        );
         tokio::pin!(authentication);
         loop {
             tokio::select! {
@@ -181,7 +188,7 @@ async fn connect(
     activity.stage("restoring", None, None);
     let session = client::Session::new(Some(&candidate))?;
     let result=async {
-  let fresh=tokio::select!{_=cancel.cancelled()=>return Err(Error::LoginExpired),_=state.wait_revoked(owner)=>return Err(Error::LoginExpired),r=tokio::time::timeout(Duration::from_secs(120),client::authenticate(&session,Some(&candidate),expected.as_deref(),None))=>r.map_err(|_|Error::Network)??};
+  let fresh=tokio::select!{_=cancel.cancelled()=>return Err(Error::LoginExpired),_=state.wait_revoked(owner)=>return Err(Error::LoginExpired),r=tokio::time::timeout(Duration::from_secs(120),client::authenticate(&session,Some(&candidate),expected.as_deref(),None,client::IdentityStage::LoginRecheck))=>r.map_err(|_|Error::Network)??};
   persist_verified(owner,state,cancel,&path,&fresh).await
  }.await;
     if let Err(error @ (Error::Rejected | Error::Challenge | Error::IdentityUnverified)) = &result {

@@ -18,6 +18,8 @@
 
 普通下载最多失败四次，之后仅由明确的“同步并重试失败项”或单条失败重试重新排队。平台拒绝停止本轮并冷却，连续三轮拒绝后暂停；登录失效、身份异常、验证要求或满盘直接暂停。登录、恢复和手动任务均不能绕过冷却。
 
+身份核验失败时，日志记录调用阶段（`SyncStart`、`ScanRecheck`、`DetailRecheck`、`Login`、`LoginRecheck`、`Resume`）及固定原因码。身份响应日志区分 `guest_missing`、`guest_type_invalid`、`user_id_missing`、`user_id_type_invalid`、`user_id_invalid`、`invalid_self_endpoint`、`response_not_successful`、`guest_session` 和 `account_mismatch`，仅附带相关字段的类型（`missing` 表示缺失），不记录账号值、Cookie、签名、二维码或响应正文。请求失败或本地凭据异常记录原有错误码和阶段；这些诊断不放宽校验、不增加自动重试，也不能追溯未保存的历史失败响应。
+
 ## 实现边界
 
 - 小红书运行时为 Rust HTTP 客户端、SQLite 和原调度器，签名在 Rust 内计算；未加入 Python／Node 服务。直接读取官方分页 JSON 并核对账号和游标。旧 `browser` 配置兼容读取但不再生效，不需要浏览器运行时。
